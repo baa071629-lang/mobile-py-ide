@@ -6,21 +6,19 @@ plugins {
 
 val repoRoot: File = rootProject.projectDir.parentFile
 
-/** Les ressources générées vont dans build/, jamais dans src/ (Gradle strict). */
-val stagedAssetsDir: File = layout.buildDirectory.dir("stagedAssets").get().asFile
-stagedAssetsDir.mkdirs()
+// Les ressources générées restent dans build/ (jamais dans src/, Gradle strict).
+val stagedAssets = layout.buildDirectory.dir("stagedAssets")
 
-/** Interface web (Monaco inclus) copiée dans les assets de l'APK. */
-val stageWeb by tasks.registering(Copy::class) {
+val stageWeb = tasks.register<Copy>("stageWebAssets") {
     from(File(repoRoot, "web")) { into("web") }
-    into(stagedAssetsDir)
+    into(stagedAssets)
     includeEmptyDirs = false
 }
 
-/** Moteur Python partagé, compressé dans un asset extrait au premier lancement. */
-val stagePython by tasks.registering(Zip::class) {
+// Moteur Python partagé, livré en asset puis extrait au premier lancement.
+val stagePython = tasks.register<Zip>("stagePythonSources") {
     archiveFileName.set("python-src.zip")
-    destinationDirectory.set(stagedAssetsDir)
+    destinationDirectory.set(stagedAssets)
     from(File(repoRoot, "server")) { into("server") }
     from(File(repoRoot, "pyide_gui.py"))
     from(File(repoRoot, "pyide_native.py"))
@@ -31,7 +29,6 @@ val stagePython by tasks.registering(Zip::class) {
 android {
     namespace = "dev.pyide.mobile"
     compileSdk = 34
-    buildToolsVersion = "34.0.0"
 
     defaultConfig {
         applicationId = "dev.pyide.mobile"
@@ -44,6 +41,8 @@ android {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
     }
+
+    sourceSets["main"].assets.srcDir(stagedAssets)
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -69,8 +68,6 @@ android {
         }
     }
 
-    sourceSets["main"].assets.srcDir(stagedAssetsDir)
-
     packaging {
         resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1")
     }
@@ -92,10 +89,6 @@ chaquopy {
     }
 }
 
-tasks.matching {
-    (it.name.contains("Assets") || it.name.contains("Python")) &&
-        it.name != "stageWeb" && it.name != "stagePython"
-}.configureEach { dependsOn(stageWeb, stagePython) }
 tasks.named("preBuild") { dependsOn(stageWeb, stagePython) }
 
 dependencies {
