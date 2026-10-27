@@ -12,7 +12,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from .config import MAX_OUTPUT_BYTES, MAX_RUN_SECONDS, PROJECTS_ROOT
+from .config import MAX_OUTPUT_BYTES, MAX_RUN_SECONDS, PROJECTS_ROOT, USER_SITE
+
+APP_DIR = Path(__file__).resolve().parent.parent
 from .files import ApiError, resolve_for_run
 
 OutputCallback = Callable[[str, str], Awaitable[None]]
@@ -24,6 +26,7 @@ class RunSpec:
     cwd: Path
     timeout: float
     temp_file: Path | None = None
+    gfx_file: Path | None = None
     env: dict[str, str] = field(default_factory=dict)
 
 
@@ -82,15 +85,26 @@ def build_spec(code: str | None, path: str | None, args: list[str] | None = None
         raise ApiError(400, "Aucun code ou fichier à exécuter")
 
     env = os.environ.copy()
+    gfx_file = cwd / f".pyide-gfx-{uuid.uuid4().hex[:10]}.jsonl"
+    paths = [str(APP_DIR)]
+    if USER_SITE.is_dir():
+        paths.insert(0, str(USER_SITE))
+    existing = env.get("PYTHONPATH", "")
+    if existing:
+        paths.append(existing)
     env.update({
         "PYTHONUNBUFFERED": "1",
         "PYTHONIOENCODING": "utf-8",
         "TERM": "xterm-256color",
         "MPLBACKEND": env.get("MPLBACKEND", "Agg"),
+        "PYTHONPATH": os.pathsep.join(paths),
+        "PYIDE_GFX_FILE": str(gfx_file),
+        "PYIDE_IN_IDE": "1",
     })
     env.pop("PYTHONSTARTUP", None)
 
-    return RunSpec(cmd=cmd, cwd=cwd, timeout=timeout, temp_file=temp_file, env=env)
+    return RunSpec(cmd=cmd, cwd=cwd, timeout=timeout, temp_file=temp_file,
+                   gfx_file=gfx_file, env=env)
 
 
 class RunSession:
@@ -235,6 +249,12 @@ class RunSession:
         )
 
     def _cleanup_temp(self) -> None:
+        if self.spec.gfx_file:
+            try:
+                self.spec.gfx_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self.spec.gfx_file = None
         if self.spec.temp_file:
             try:
                 self.spec.temp_file.unlink(missing_ok=True)
