@@ -2,7 +2,7 @@ package dev.pyide.mobile
 
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
-import com.chaquo.python.Python
+import com.chaquo.python.PyObject
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -15,9 +15,11 @@ import org.json.JSONObject
  *   - `startRun(json)`        exécution d'un programme, événements poussés
  *                             vers `window.PyIdeEvent(json)`.
  */
-class PyBridge(private val activity: MainActivity, private val webView: WebView) {
-
-    private val module = Python.getInstance().getModule("pyide_native")
+class PyBridge(
+    private val activity: MainActivity,
+    private val webView: WebView,
+    private val module: PyObject,
+) {
     private val pending = ArrayDeque<String>()
     private var pageReady = false
 

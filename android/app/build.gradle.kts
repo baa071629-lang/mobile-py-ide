@@ -1,5 +1,3 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -7,23 +5,27 @@ plugins {
 }
 
 val repoRoot: File = rootProject.projectDir.parentFile
-val stagedPython: File = file("src/main/python")
-val stagedAssets: File = file("src/main/assets")
 
-/** Copie du moteur Python partagé (server/, pyide_gui, pyide_native). */
-val stagePython by tasks.registering(Copy::class) {
+/** Les ressources générées vont dans build/, jamais dans src/ (Gradle strict). */
+val stagedAssetsDir: File = layout.buildDirectory.dir("stagedAssets").get().asFile
+stagedAssetsDir.mkdirs()
+
+/** Interface web (Monaco inclus) copiée dans les assets de l'APK. */
+val stageWeb by tasks.registering(Copy::class) {
+    from(File(repoRoot, "web")) { into("web") }
+    into(stagedAssetsDir)
+    includeEmptyDirs = false
+}
+
+/** Moteur Python partagé, compressé dans un asset extrait au premier lancement. */
+val stagePython by tasks.registering(Zip::class) {
+    archiveFileName.set("python-src.zip")
+    destinationDirectory.set(stagedAssetsDir)
     from(File(repoRoot, "server")) { into("server") }
     from(File(repoRoot, "pyide_gui.py"))
     from(File(repoRoot, "pyide_native.py"))
     from(File(repoRoot, "sitecustomize.py"))
-    into(stagedPython)
     includeEmptyDirs = false
-}
-
-/** Copie de l'interface web (Monaco inclus) dans les assets de l'APK. */
-val stageWeb by tasks.registering(Copy::class) {
-    from(File(repoRoot, "web")) { into("web") }
-    into(stagedAssets)
 }
 
 android {
@@ -67,6 +69,8 @@ android {
         }
     }
 
+    sourceSets["main"].assets.srcDir(stagedAssetsDir)
+
     packaging {
         resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1")
     }
@@ -88,13 +92,9 @@ chaquopy {
     }
 }
 
-tasks.matching {
-    (it.name.contains("Python") || it.name.contains("Assets")) &&
-        it.name != "stagePython" && it.name != "stageWeb"
-}.configureEach {
-    dependsOn(stagePython, stageWeb)
-}
-tasks.named("preBuild") { dependsOn(stagePython, stageWeb) }
+tasks.matching { it.name.contains("Assets") || it.name.contains("Python") }
+    .configureEach { dependsOn(stageWeb, stagePython) }
+tasks.named("preBuild") { dependsOn(stageWeb, stagePython) }
 
 dependencies {
     implementation("androidx.webkit:webkit:1.11.0")

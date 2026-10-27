@@ -17,11 +17,13 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
+import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.util.zip.ZipInputStream
 
 /**
  * Activité unique : elle héberge une WebView qui affiche l'interface de l'IDE
@@ -46,7 +48,7 @@ class MainActivity : Activity() {
         setContentView(webView)
         configureWebView()
 
-        val module = Python.getInstance().getModule("pyide_native")
+        val module = startPythonBridge()
         val info = JSONObject()
             .put("filesDir", filesDir.absolutePath)
             .put("cacheDir", cacheDir.absolutePath)
@@ -54,9 +56,37 @@ class MainActivity : Activity() {
             .put("version", versionName())
         module.callAttr("init", info.toString())
 
-        bridge = PyBridge(this, webView)
+        bridge = PyBridge(this, webView, module)
         webView.addJavascriptInterface(bridge as PyBridge, "PyAndroid")
         webView.loadUrl("https://appassets.androidplatform.net/assets/web/index.html")
+    }
+
+    /** Extrait le moteur Python livré en asset puis charge le pont. */
+    private fun startPythonBridge(): PyObject {
+        val home = File(filesDir, "pycode")
+        home.mkdirs()
+        try {
+            assets.open("python-src.zip").use { raw ->
+                ZipInputStream(raw).use { zip ->
+                    var entry = zip.nextEntry
+                    while (entry != null) {
+                        val target = File(home, entry.name)
+                        if (entry.isDirectory) {
+                            target.mkdirs()
+                        } else {
+                            target.parentFile?.mkdirs()
+                            FileOutputStream(target).use { output -> zip.copyTo(output) }
+                        }
+                        zip.closeEntry()
+                        entry = zip.nextEntry
+                    }
+                }
+            }
+        } catch (error: Exception) {
+            android.util.Log.e("PyIDE", "Extraction du moteur Python impossible", error)
+        }
+        val bootstrap = Python.getInstance().getModule("pyide_bootstrap")
+        return bootstrap.callAttr("prepare", home.absolutePath)
     }
 
     private fun configureWebView() {

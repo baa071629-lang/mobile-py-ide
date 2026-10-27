@@ -1,7 +1,5 @@
 # Contenu généré au build depuis la racine du dépôt
 /app/src/main/assets/web/
-/app/src/main/python/*.py
-/app/src/main/python/server/
 /build/
 /.gradle/
 /local.properties
