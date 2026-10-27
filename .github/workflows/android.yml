@@ -88,6 +88,35 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Taille de l'APK
+      - name: Publier l'APK en release GitHub
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ls -lh android/app/build/outputs/apk/debug/*.apk
+          APK=$(ls android/app/build/outputs/apk/debug/*.apk | head -1)
+          echo "APK: $APK"
+          if gh release view android-v3.0.0 >/dev/null 2>&1; then
+            gh release upload android-v3.0.0 "$APK" --clobber
+          else
+            gh release create android-v3.0.0 "$APK" \
+              --target "$GITHUB_SHA" \
+              --title "Mobile Py IDE 3.0 — APK Android" \
+              --notes "APK debug de Mobile Py IDE 3.0 (Python 3.11 embarqué, Monaco hors ligne, éditeur/sortie séparés, entrée interactive, paquets et écran graphique)."
+          fi
+
+      - name: Résumé du binaire
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK=$(ls android/app/build/outputs/apk/debug/*.apk | head -1)
+          {
+            echo "### APK prêt : $(basename "$APK")"
+            echo '```'
+            ls -lh "$APK"
+            unzip -l "$APK" | sort -k1 -n -r | head -12
+            echo "..."
+            unzip -l "$APK" | grep -E "python-src.zip|assets/web/index.html|libpython" | head -8
+            echo '```'
+          } > /tmp/summary.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/summary.md || true
