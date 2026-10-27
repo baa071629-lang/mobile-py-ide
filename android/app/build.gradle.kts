@@ -89,8 +89,8 @@ chaquopy {
 }
 
 tasks.matching {
-    it.name.startsWith("merge") && it.name.contains("Assets") ||
-        it.name.startsWith("generate") && it.name.contains("Python")
+    (it.name.contains("Python") || it.name.contains("Assets")) &&
+        it.name != "stagePython" && it.name != "stageWeb"
 }.configureEach {
     dependsOn(stagePython, stageWeb)
 }
