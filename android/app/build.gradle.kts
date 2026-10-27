@@ -92,8 +92,10 @@ chaquopy {
     }
 }
 
-tasks.matching { it.name.contains("Assets") || it.name.contains("Python") }
-    .configureEach { dependsOn(stageWeb, stagePython) }
+tasks.matching {
+    (it.name.contains("Assets") || it.name.contains("Python")) &&
+        it.name != "stageWeb" && it.name != "stagePython"
+}.configureEach { dependsOn(stageWeb, stagePython) }
 tasks.named("preBuild") { dependsOn(stageWeb, stagePython) }
 
 dependencies {
