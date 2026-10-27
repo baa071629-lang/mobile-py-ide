@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   build:
@@ -53,6 +54,18 @@ jobs:
         run: |
           set -o pipefail
           gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
+
+      - name: Annoter l'échec (lisible via l'API)
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          log = Path("/tmp/build.log")
+          text = log.read_text(errors="replace") if log.exists() else "journal absent"
+          tail = "\n".join(text.strip().splitlines()[-45:])
+          tail = tail.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          print("::error title=Gradle::" + tail)
+          PY
 
       - name: Publier le journal en cas d'échec
         if: failure()
