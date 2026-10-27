@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.PyIDE" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#1e1e2e</item>
+        <item name="android:statusBarColor">#181825</item>
+        <item name="android:navigationBarColor">#181825</item>
+        <item name="android:colorAccent">#89b4fa</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>
