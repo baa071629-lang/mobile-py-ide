@@ -10,6 +10,7 @@ __pycache__/
 
 # Fichiers d'exécution temporaires de l'IDE
 .pyide-run-*
+.pyide-gfx-*
 .pyide-trash/
 
 # Données locales / journaux

@@ -26,6 +26,11 @@ from pathlib import Path
 from . import gui
 from .config import MAX_OUTPUT_BYTES, MAX_RUN_SECONDS, USER_SITE
 
+try:  # Chaquopy fournit ctypes, mais on reste tolérant.
+    import ctypes
+except ImportError:  # pragma: no cover - dépend de la build Python
+    ctypes = None
+
 GRAPHICS_MISSING = {
     "tkinter": "Tkinter n'est pas disponible dans l'application Android. "
                "Utilise « from pyide_gui import screen » pour dessiner.",
@@ -161,6 +166,9 @@ class StdinStream:
 
 
 def _async_raise(thread_id: int, exc_type) -> None:
+    """Interrompt un fil Python bloqué (best effort selon la plateforme)."""
+    if ctypes is None or thread_id is None:
+        return
     ctypes.pythonapi.PyThreadState_SetAsyncExc(
         ctypes.c_ulong(thread_id), ctypes.py_object(exc_type)
     )
