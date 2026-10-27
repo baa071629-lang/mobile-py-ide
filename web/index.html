@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#1e1e2e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Mobile Py IDE</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/icons/icon-192.png" sizes="192x192" type="image/png">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-theme="dark">
+  <div id="boot">
+    <img class="boot-icon" src="/favicon.svg" width="72" height="72" alt="" aria-hidden="true">
+    <div class="boot-title">Mobile Py IDE</div>
+    <div id="boot-msg">Chargement de l'éditeur…</div>
+    <div class="boot-bar"><span></span></div>
+  </div>
+
+  <header id="topbar">
+    <button id="btn-sidebar" class="icon-btn" title="Fichiers" aria-label="Ouvrir les fichiers">☰</button>
+    <div id="tabbar" role="tablist" aria-label="Fichiers ouverts"></div>
+    <button id="btn-run" class="run-btn" title="Exécuter (Ctrl+Entrée)" aria-label="Exécuter">▶</button>
+    <button id="btn-save" class="icon-btn" title="Enregistrer (Ctrl+S)" aria-label="Enregistrer">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+        <polyline points="17 21 17 13 7 13 7 21"/>
+        <polyline points="7 3 7 8 15 8"/>
+      </svg>
+    </button>
+    <button id="btn-more" class="icon-btn" title="Plus d'actions" aria-label="Plus d'actions">⋯</button>
+  </header>
+
+  <div id="layout">
+    <aside id="sidebar" class="hidden" aria-hidden="true">
+      <div class="sidebar-head">
+        <strong>Projets</strong>
+        <div class="sidebar-actions">
+          <button id="btn-new-file" class="icon-btn small" title="Nouveau fichier">＋</button>
+          <button id="btn-new-folder" class="icon-btn small" title="Nouveau dossier">🗀</button>
+          <button id="btn-upload" class="icon-btn small" title="Importer des fichiers">⬆</button>
+          <button id="btn-refresh" class="icon-btn small" title="Rafraîchir">⟳</button>
+          <button id="btn-sidebar-close" class="icon-btn small" title="Fermer">✕</button>
+        </div>
+      </div>
+      <div id="breadcrumb"></div>
+      <ul id="file-list"></ul>
+      <div class="sidebar-foot">
+        <span id="projects-root" title="Dossier des projets"></span>
+        <button id="btn-sidebar-settings" class="icon-btn small" title="Paramètres">⚙</button>
+      </div>
+    </aside>
+    <div id="backdrop" class="hidden"></div>
+
+    <main id="main">
+      <div id="editor-wrap">
+        <div id="editor"></div>
+      </div>
+
+      <section id="panel" class="hidden" aria-label="Panneau inférieur">
+        <div id="panel-head">
+          <button class="panel-tab active" data-panel="terminal">Terminal</button>
+          <button class="panel-tab" data-panel="problems">Problèmes <span id="problems-badge">0</span></button>
+          <div class="spacer"></div>
+          <button id="btn-console" class="text-btn" title="Ouvrir une console Python interactive">Console</button>
+          <button id="btn-terminal-clear" class="text-btn" title="Effacer le terminal">Effacer</button>
+          <button id="btn-panel-close" class="icon-btn small" title="Fermer le panneau">✕</button>
+        </div>
+        <div id="terminal-view">
+          <div id="terminal-meta">
+            <span id="terminal-status">Prêt</span>
+            <span id="terminal-cwd"></span>
+          </div>
+          <pre id="terminal-body" aria-live="polite"></pre>
+          <form id="stdin-form" class="hidden" autocomplete="off">
+            <span class="prompt">›</span>
+            <input id="stdin-input" placeholder="Entrée du programme…" autocomplete="off"
+                   autocapitalize="off" spellcheck="false">
+            <button type="submit" class="text-btn primary">Envoyer</button>
+          </form>
+        </div>
+        <div id="problems-view" class="hidden">
+          <ul id="problems-list"></ul>
+          <div id="problems-empty">Aucun problème détecté. 🎉</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer id="statusbar">
+    <button id="status-pos" title="Aller à la ligne">Ln 1, Col 1</button>
+    <span id="status-indent">Espaces : 4</span>
+    <span id="status-python">Python</span>
+    <button id="status-problems" title="Voir les problèmes">✓ 0</button>
+    <span id="status-save"></span>
+    <button id="status-settings" class="icon-btn tiny" title="Paramètres">⚙</button>
+  </footer>
+
+  <div id="keybar" aria-label="Clavier rapide">
+    <button data-key="tab" title="Tabulation">⇥</button>
+    <button data-key="outdent" title="Désindenter">⇤</button>
+    <button data-key=":" title="Deux-points">:</button>
+    <button data-key="(" title="Parenthèse">(</button>
+    <button data-key=")" title="Parenthèse fermante">)</button>
+    <button data-key='"' title="Guillemet">"</button>
+    <button data-key="'" title="Apostrophe">'</button>
+    <button data-key="=" title="Égal">=</button>
+    <button data-key="#" title="Dièse">#</button>
+    <button data-key="_" title="Underscore">_</button>
+    <button data-action="undo" title="Annuler">↶</button>
+    <button data-action="redo" title="Rétablir">↷</button>
+    <button data-action="comment" title="Commenter">#&nbsp;⁄</button>
+    <button data-action="find" title="Rechercher">🔍</button>
+    <button data-action="keyboard" title="Masquer le clavier rapide">⌨</button>
+  </div>
+
+  <div id="toast" class="hidden" role="status"></div>
+
+  <div id="modal-root" class="hidden">
+    <div id="modal-backdrop"></div>
+    <div id="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header>
+        <h2 id="modal-title"></h2>
+        <button id="modal-close" class="icon-btn" aria-label="Fermer">✕</button>
+      </header>
+      <div id="modal-body"></div>
+      <footer id="modal-footer"></footer>
+    </div>
+  </div>
+
+  <div id="loading" class="hidden">
+    <div class="spinner"></div>
+    <span id="loading-text">Chargement…</span>
+  </div>
+
+  <input type="file" id="file-input" multiple hidden>
+
+  <noscript><p style="padding:2rem">Active JavaScript pour utiliser Mobile Py IDE.</p></noscript>
+  <script src="/static/vendor/monaco/vs/loader.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+starlette>=0.41
+uvicorn>=0.29
+websockets>=12
+jedi>=0.19
+pyflakes>=3.2
+autopep8>=2.0
+python-multipart>=0.0.9

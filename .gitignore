@@ -1,0 +1,20 @@
+# Environnement virtuel
+.venv/
+venv/
+env/
+
+# Caches Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Fichiers d'exécution temporaires de l'IDE
+.pyide-run-*
+.pyide-trash/
+
+# Données locales / journaux
+*.log
+.DS_Store
+
+# Fichiers de projets utilisateur (dossier de test)
+projects/
