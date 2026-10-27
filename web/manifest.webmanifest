@@ -1,17 +1,24 @@
 {
   "id": "/",
-  "name": "Mobile Py IDE",
+  "name": "Mobile Py IDE 3",
   "short_name": "Py IDE",
-  "description": "IDE Python mobile-first servi par Termux, avec terminal interactif et Monaco hors ligne.",
+  "description": "IDE Python mobile : éditeur Monaco hors ligne, sortie séparée, entrée interactive, dossiers du téléphone, modules/paquets et écran graphique.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui"],
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
   "orientation": "any",
   "background_color": "#1e1e2e",
   "theme_color": "#1e1e2e",
   "lang": "fr",
-  "categories": ["developer", "productivity", "utilities"],
+  "categories": [
+    "developer",
+    "productivity",
+    "utilities"
+  ],
   "icons": [
     {
       "src": "icons/icon-192.png",

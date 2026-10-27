@@ -15,8 +15,15 @@ const PyTransport = (() => {
     token: "",
     runHandlers: new Map(),
     pickers: new Map(),
+    pending: new Map(),
     seq: 0,
   };
+
+  // Opérations longues (réseau, pip) : exécutées hors du fil JavaScript.
+  const LONG_OPS = new Set([
+    "packages.install", "packages.uninstall", "packages.search",
+    "packages.info", "ai.ask",
+  ]);
 
   /* ---------- événements poussés par Android ---------- */
   window.PyIdeEvent = function (raw) {
@@ -24,6 +31,24 @@ const PyTransport = (() => {
     try { event = JSON.parse(String(raw)); } catch (_) { return; }
     if (!event || typeof event !== "object") return;
 
+    if (event.type === "resume") {
+      if (typeof window.PyIdeOnResume === "function") window.PyIdeOnResume();
+      return;
+    }
+    if (event.type === "response") {
+      const waiter = state.pending.get(String(event.reqId));
+      if (!waiter) return;
+      state.pending.delete(String(event.reqId));
+      const data = event.data;
+      if (data && data.error) {
+        const error = new Error(data.error);
+        error.status = data.status || 500;
+        waiter.reject(error);
+      } else {
+        waiter.resolve(data);
+      }
+      return;
+    }
     if (event.type === "picked") {
       const resolve = state.pickers.get(event.purpose || "files");
       if (resolve) {
@@ -55,9 +80,25 @@ const PyTransport = (() => {
     return data;
   }
 
+  function nativeCallAsync(op, params = {}) {
+    return new Promise((resolve, reject) => {
+      state.seq += 1;
+      const requestId = String(state.seq);
+      state.pending.set(requestId, { resolve, reject });
+      try {
+        bridge.callAsync(JSON.stringify({ op, ...params }), requestId);
+      } catch (error) {
+        state.pending.delete(requestId);
+        reject(new Error(`Pont Android indisponible : ${error}`));
+      }
+    });
+  }
+
   const ROUTES = [
     [/^\/api\/health$/, { GET: "health" }],
     [/^\/api\/places$/, { GET: "places" }],
+    [/^\/api\/places\/add$/, { POST: "places.add" }],
+    [/^\/api\/places\/remove$/, { POST: "places.remove" }],
     [/^\/api\/info$/, { GET: "info" }],
     [/^\/api\/tree$/, { GET: "tree" }],
     [/^\/api\/file$/, { GET: "file.read", POST: "file.save" }],
@@ -105,6 +146,7 @@ const PyTransport = (() => {
         try { Object.assign(params, JSON.parse(options.body)); }
         catch (_) { throw new Error("Corps JSON invalide"); }
       }
+      if (LONG_OPS.has(op)) return nativeCallAsync(op, params);
       return nativeCall(op, params);
     }
 

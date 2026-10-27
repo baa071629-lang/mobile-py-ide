@@ -1,89 +1,113 @@
-# Mobile Py IDE
+# Mobile Py IDE 3.0
 
-Un IDE Python **mobile-first** servi localement par **Termux** et utilisable dans le
-navigateur Android (ou sur un PC du réseau local). Monaco, l'analyse Jedi et le
-terminal interactif fonctionnent sans connexion Internet.
+IDE Python **mobile-first** pour Android, inspiré de PyramIDE : éditeur Monaco
+hors ligne, exécution Python réelle, entrée interactive, gestion de dossiers,
+modules/paquets et écran graphique.
+
+Deux façons de l'utiliser :
+
+| Mode | Ce que tu installes | Python |
+|---|---|---|
+| **Application Android (APK)** | `app-debug.apk` depuis les [releases](../../releases) | 3.11 embarqué (Chaquopy), aucun root, aucune autre app |
+| **Serveur Termux / PC** | ce dépôt + `install_termux.sh` | ton Python Termux, avec `pip` complet |
+
+## Télécharger l'APK
+
+1. Ouvre la page **[Releases](../../releases)** et télécharge `app-debug.apk`
+   (tag `android-v3.0.0`).
+2. Autorise l'installation depuis cette source, puis installe.
+3. Au premier lancement, l'app extrait son moteur Python et crée un projet
+   d'exemple (`bienvenue.py`).
+4. Pour accéder à tes dossiers (`/sdcard`, `Download`, `Documents`…), touche
+   **☰ → ＋** : Android ouvre l'écran « Accès à tous les fichiers ».
+
+L'APK est compilé automatiquement par GitHub Actions à chaque modification du
+serveur ou de l'interface (`.github/workflows/android.yml`).
+
+## Nouveautés 3.0
+
+- **Éditeur et sortie séparés** : deux zones distinctes, redimensionnables en
+  glissant la poignée (⫿ dans la barre du haut pour masquer la sortie).
+- **Entrée interactive comme PyramIDE** : quand le programme appelle `input()`,
+  l'invite (« Ton nom ? ») s'affiche dans la sortie et le champ de saisie prend
+  le focus. Historique ↑/↓, `EOF` (Ctrl+D), bouton **Stop** pour interrompre.
+- **Accès à tes dossiers** : projets, dossier personnel, stockage du téléphone,
+  plus tout dossier ajouté à la volée. Import de fichiers via le sélecteur
+  Android.
+- **Modules et paquets** : liste des modules installés, **catalogue** (Requests,
+  Rich, Pygame, NumPy, Pillow, Matplotlib, Kivy…), **recherche PyPI**,
+  installation/désinstallation/mise à jour, badges « Graphique » et
+  « roue native ».
+- **Écran graphique** : canevas dessinable (`pyide_gui`), images Pillow,
+  tracés Matplotlib — affiché dans l'onglet **Graphique**.
+- **Corrections** : chemins absolus fiables, démarrage plus rapide, panneau
+  repliable, écho de saisie sans doublon, définition vers un chemin absolu,
+  gestion des erreurs d'import de modules graphiques.
 
 ## Fonctionnalités
 
 ### Éditeur
-
-- **Monaco** vendorisé localement (pas de CDN), multi-onglets, thème clair/sombre
-- **Auto-complétion** Jedi : modules, fonctions, méthodes, paramètres et documentation
-- **Aide sur le symbole** : signature, docstring et type au survol
-- **Aller à la définition** : dans le fichier courant, un autre fichier du projet,
-  ou vers la bibliothèque standard ; `Ctrl`/`Cmd` + clic
-- **Diagnostics en direct** Pyflakes : noms inconnus, imports inutilisés, syntaxe…
-- **Formater** avec autopep8 (commande, palette ou menu ⋯)
-- **Recherche** dans le fichier, **ouverture rapide** (`Ctrl+P`) et recherche
-  plein texte dans les projets (`Ctrl+Maj+F`)
-- **Exemples de code** prêts à insérer (fichiers, boucles, classes, JSON, regex…)
-- Annuler/rétablir, indentation, commentaire de ligne, sauvegarde automatique optionnelle
+Monaco local (aucun CDN), multi-onglets, thème clair/sombre, complétion Jedi,
+signature, survol, aller à la définition, diagnostics Pyflakes en direct,
+formatage autopep8, recherche dans le fichier, ouverture rapide (`Ctrl+P`),
+recherche plein texte (`Ctrl+Maj+F`), exemples de code, sauvegarde automatique.
 
 ### Exécution
+Bouton ▶ (`Ctrl+Entrée`), sortie en temps réel, stdout/stderr séparés, entrée
+standard interactive, arrêt, timeout configurable, console Python (`python -i`),
+exécution de la sélection, arguments en ligne de commande, repli HTTP si la
+WebSocket n'est pas disponible.
 
-- Bouton ▶ ou `Ctrl+Entrée` : exécution du fichier ou du **buffer modifié**
-- **Sortie en temps réel** via WebSocket, stdout/stderr séparés
-- **Entrée standard interactive** (`input()`) directement dans le terminal
-- **Arrêt** du processus, timeout configurable (30 s par défaut, 5 à 300 s)
-- **Console Python interactive** (`python -i`) avec REPL
-- **Exécuter la sélection** et **exécuter avec des arguments** de ligne de commande
-- Repli automatique en HTTP si la WebSocket n'est pas disponible
+### Fichiers
+Parcours, création, renommage, suppression, import, upload, téléchargement,
+recherche, dossiers cachés. Tous les accès sont confinés aux **emplacements
+autorisés** (aucune évasion `../`).
 
-### Fichiers et outils
+### Paquets
+Sur Termux/PC : `pip` réel dans le venv de l'IDE.
+Dans l'app Android : téléchargement des **roues pures** (`py3-none-any`) depuis
+PyPI et installation dans un dossier utilisateur — aucun compilateur requis.
+Les paquets natifs (NumPy, Pillow, Matplotlib) sont installés **au moment du
+build** de l'APK, comme le « dépôt de bibliothèques précompilées » de PyramIDE.
 
-- Gestionnaire de fichiers : parcourir, créer, renommer, supprimer, uploader,
-  télécharger, afficher les fichiers cachés
-- Fichiers de projet confinés dans `PYIDE_PROJECTS` (protection contre `../`)
-- Palette de commandes (`Ctrl+K`), raccourcis clavier et clavier mobile dédié
-- Gestionnaire **pip** : lister, installer et désinstaller les paquets du venv
-- **Assistant IA optionnel** : API compatible OpenAI (OpenAI, Ollama, LM Studio…)
-  avec modes expliquer / corriger / tests / revue / générer / optimiser
-- Paramètres persistants : police, tabulation, retour à la ligne, lint, thème,
-  autosauvegarde, timeout, clavier rapide
-- Manifeste **PWA** : ajout à l'écran d'accueil Android ; le serveur Termux doit
-  rester lancé
+### Écran graphique
+
+```python
+from pyide_gui import screen
+
+s = screen(640, 400, "#101020")   # canevas
+s.clear()
+s.rect(20, 20, 120, 60, "#89b4fa")
+s.circle(320, 200, 70, "#f9e2af")
+s.line(0, 400, 640, 0, "#a6e3a1", width=3)
+s.text(24, 340, "Bonjour !", "#cdd6f4", size=22)
+s.present()
+```
+
+`plt.show()` (Matplotlib) et `Image.show()` (Pillow) affichent aussi leur rendu
+dans cet onglet.
 
 ## Installation (Termux)
 
-1. Installe [Termux (F-Droid)](https://f-droid.org/en/packages/com.termux/) —
-   **pas** la version Play Store, obsolète.
-2. Place le dossier dans Termux, par exemple :
-   ```bash
-   pkg install git
-   git clone <url-de-ce-projet> ~/mobile-py-ide
-   ```
-3. Installe les dépendances :
-   ```bash
-   bash ~/mobile-py-ide/install_termux.sh
-   ```
-4. Lance :
-   ```bash
-   start-pyide
-   ```
-5. Ouvre `http://127.0.0.1:8765` dans le navigateur du téléphone.
+```bash
+pkg install git
+git clone https://github.com/baa071629-lang/mobile-py-ide.git ~/mobile-py-ide
+bash ~/mobile-py-ide/install_termux.sh
+start-pyide
+```
 
-L'installateur crée aussi un raccourci `~/start-pyide`. Il utilise
-`~/storage/shared/PydroidProjects` si le stockage partagé est autorisé, sinon
-`~/projects`.
+Puis ouvre `http://127.0.0.1:8765`. L'installateur crée la racine
+`~/storage/shared/PyIDE` (ou `~/projects`). Après `termux-setup-storage`, le
+stockage partagé apparaît comme emplacement « Stockage du téléphone ».
 
-## Ouvrir tes projets Pydroid
-
-Après `termux-setup-storage`, les fichiers de
-`/storage/emulated/0/PydroidProjects/` apparaissent dans l'onglet Fichiers (☰).
-Ils peuvent être édités et exécutés directement par Mobile Py IDE.
-
-## Depuis un PC (même Wi-Fi)
+### Depuis un PC (même Wi-Fi)
 
 ```bash
 PYIDE_HOST=0.0.0.0 PYIDE_TOKEN=mon-secret bash start.sh
 ```
 
-Puis ouvre `http://<ip-du-telephone>:8765`. L'interface demande le jeton et
-l'envoie avec chaque requête HTTP/WebSocket.
-
 > ⚠️ Le serveur exécute du code Python arbitraire. Ne l'expose **jamais** sur
-> Internet. En réseau local, utilise toujours `PYIDE_TOKEN`.
+> Internet, et utilise toujours `PYIDE_TOKEN` sur un réseau local.
 
 ## Configuration
 
@@ -91,20 +115,14 @@ l'envoie avec chaque requête HTTP/WebSocket.
 |---|---|---|
 | `PYIDE_HOST` | `127.0.0.1` | Adresse d'écoute (`0.0.0.0` pour le réseau local) |
 | `PYIDE_PORT` | `8765` | Port HTTP/WebSocket |
-| `PYIDE_PROJECTS` | `~/storage/shared/PydroidProjects` ou `~/projects` | Racine des projets |
+| `PYIDE_PROJECTS` | `~/storage/shared/PyIDE` ou `~/projects` | Racine des projets |
+| `PYIDE_ROOTS` | *(vide)* | Dossiers supplémentaires autorisés (`:` ou `,`) |
 | `PYIDE_TOKEN` | *(vide)* | Jeton d'accès partagé ; obligatoire hors localhost |
 | `PYIDE_RUN_TIMEOUT` | `30` | Timeout d'exécution par défaut (secondes) |
-| `PYIDE_AI_URL` | *(vide)* | URL d'une API compatible OpenAI |
-| `PYIDE_AI_KEY` | *(vide)* | Clé de l'API IA |
-| `PYIDE_AI_MODEL` | *(vide)* | Nom du modèle IA |
-| `PYIDE_OLLAMA_URL` | `http://127.0.0.1:11434` | Serveur Ollama local détecté automatiquement |
-
-Exemple avec Ollama local :
-
-```bash
-OLLAMA_HOST=127.0.0.1:11434 ollama serve &
-PYIDE_AI_MODEL=qwen2.5-coder:7b bash start.sh
-```
+| `PYIDE_PKG_BACKEND` | `pip` (`wheels` sur Android) | Moteur d'installation des paquets |
+| `PYIDE_USER_SITE` | `~/.pyide-packages` | Dossier des roues installées |
+| `PYIDE_AI_URL` / `_KEY` / `_MODEL` | *(vide)* | API compatible OpenAI |
+| `PYIDE_OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama local détecté automatiquement |
 
 ## Raccourcis
 
@@ -112,59 +130,63 @@ PYIDE_AI_MODEL=qwen2.5-coder:7b bash start.sh
 |---|---|
 | `Ctrl+S` | Enregistrer |
 | `Ctrl+Entrée` | Exécuter / arrêter |
-| `Ctrl+K` ou `F1` | Palette de commandes |
-| `Ctrl+P` | Ouverture rapide d'un fichier |
-| `Ctrl+Maj+P` | Palette de commandes |
-| `Ctrl+Maj+F` | Rechercher dans les fichiers |
+| `Ctrl+K` / `F1` | Palette de commandes |
+| `Ctrl+P` | Ouverture rapide |
+| `Ctrl+Maj+F` | Recherche dans les fichiers |
 | `Ctrl+W` | Fermer l'onglet |
 | `Ctrl+Maj+E` | Afficher / masquer les fichiers |
 | `Échap` | Fermer panneau, barre latérale ou modale |
 
 Sur mobile, le clavier rapide fournit Tab, indentation, parenthèses, guillemets,
-annuler/rétablir et accès à la recherche.
+annuler/rétablir et recherche.
 
 ## Architecture
 
 ```
 mobile-py-ide/
 ├── server/
-│   ├── app.py         # Routes Starlette, HTTP + WebSocket
-│   ├── analysis.py    # Jedi (complétion, hover, définition) + Pyflakes
-│   ├── files.py       # Arborescence, lecture/écriture, recherche sécurisée
-│   ├── runner.py      # Sous-processus Python, flux, stdin, arrêt, timeout
-│   ├── packages.py    # pip list / install / uninstall
-│   ├── ai.py          # Assistant IA optionnel (OpenAI / Ollama)
+│   ├── app.py         # Starlette : routes HTTP, WebSocket, événements graphiques
+│   ├── analysis.py    # Jedi + Pyflakes + autopep8
+│   ├── files.py       # Emplacements multiples, fichiers, recherche confinée
+│   ├── runner.py      # Sous-processus Python (serveur) : flux, stdin, stop
+│   ├── native.py      # Exécution en fil (app Android) : stdin, stop, REPL, canevas
+│   ├── gui.py         # Canevas graphique + accroches Matplotlib/Pillow
+│   ├── packages.py    # pip (serveur) ou roues pures (Android) + recherche PyPI
+│   ├── ai.py          # Assistant IA optionnel
 │   ├── snippets.py    # Exemples de code
-│   └── config.py      # Variables d'environnement et constantes
+│   └── config.py      # Emplacements, constantes, variables d'environnement
+├── pyide_native.py    # Pont Python ⇄ Kotlin (opérations, exécution, entrées)
+├── pyide_gui.py       # Module « canevas » utilisable par les programmes
+├── sitecustomize.py   # Signale les lectures de stdin (serveur)
 ├── web/
-│   ├── index.html     # Interface mobile
-│   ├── app.js         # Monaco, onglets, terminal, palette, modales
-│   ├── style.css      # Thèmes et responsive
-│   ├── manifest.webmanifest
+│   ├── index.html     # Interface : éditeur | poignée | sortie
+│   ├── app.js         # Monaco, onglets, terminal, graphique, paquets, modales
+│   ├── transport.js   # HTTP/WebSocket ou pont Android (même code appelant)
+│   ├── style.css      # Thèmes, split, panneaux
 │   └── vendor/monaco/ # Monaco hors ligne
-├── tests/
-│   └── test_smoke.py  # Tests HTTP/WebSocket de fumée
-├── install_termux.sh
-├── start.sh
-└── requirements.txt
+├── android/           # Projet Gradle : WebView + Chaquopy (Python 3.11)
+├── tests/             # HTTP/WebSocket, pont natif, canevas, entrée
+└── .github/workflows/android.yml
 ```
 
-Le backend utilise **Starlette** directement, sans FastAPI ni pydantic : ces
-dépendances posent problème sous Python 3.14/Termux. Jedi, Pyflakes et autopep8
-sont du Python pur.
+Le même code Python sert les deux modes : `server/app.py` expose les routes pour
+le navigateur, `pyide_native.py` expose les mêmes opérations au pont Android.
+Côté web, `transport.js` traduit chaque route REST en opération native : le
+reste du frontend ne sait pas sur quelle plateforme il tourne.
 
 ### API principale
 
 - `POST /api/complete`, `/api/hover`, `/api/signature`, `/api/definition`
 - `POST /api/diagnose`, `/api/format`
-- `GET /api/health` (public), `/api/tree`, `/api/file`, `/api/exists`,
-  `/api/search`, `/api/files`, `/api/download`
+- `GET /api/health` (public), `/api/places`, `/api/tree`, `/api/info`,
+  `/api/file`, `/api/exists`, `/api/search`, `/api/files`, `/api/download`
 - `POST /api/file`, `/api/mkdir`, `/api/rename`, `/api/delete`, `/api/upload`,
-  `/api/run`
-- `GET/POST /api/packages*`, `POST /api/ai`, `GET /api/ai/status`
-- `GET /api/snippets`
-- `WS /ws/run` : messages `start`, `stdin`, `stop` → `started`, `stdout`,
-  `stderr`, `exit`, `error`
+  `/api/import`, `/api/places/add`, `/api/places/remove`, `/api/run`
+- `GET /api/packages`, `/api/packages/catalog`, `/api/packages/search`,
+  `/api/packages/info` ; `POST /api/packages/install`, `/api/packages/uninstall`
+- `POST /api/ai`, `GET /api/ai/status`, `GET /api/snippets`
+- `WS /ws/run` : `start`, `stdin`, `close_stdin`, `stop` → `started`, `stdout`,
+  `stderr`, `need_input`, `input_echo`, `gfx`, `image`, `exit`, `error`
 
 Toutes les routes `/api/*` (sauf `/api/health`) et `/ws/run` exigent
 `X-Pyide-Token` ou `?token=…` lorsque `PYIDE_TOKEN` est défini.
@@ -172,20 +194,46 @@ Toutes les routes `/api/*` (sauf `/api/health`) et `/ws/run` exigent
 ## Tests
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
+.venv/bin/python -m pytest tests -q
 ```
 
-Les tests démarrent un serveur isolé sur un port libre, avec un dossier de
-projets temporaire. Ils couvrent les fichiers, l'analyse, le formatage,
-l'exécution HTTP et le WebSocket (stdin, arrêt).
+Les tests démarrent un serveur isolé (port libre, dossier temporaire, jeton) et
+couvrent : fichiers et confinement, emplacements multiples, analyse, formatage,
+exécution HTTP + WebSocket (stdin), canevas graphique, pont Android
+(`pyide_native`) de bout en bout.
+
+## Compiler l'APK
+
+Le build se fait sur GitHub Actions (SDK Android + JDK 17 + Python 3.11) :
+
+```bash
+gh workflow run "APK Android"   # ou simplement pousser sur une PR
+```
+
+En local, si tu as le SDK Android et Python 3.11 :
+
+```bash
+cd android && gradle assembleDebug
+# APK : app/build/outputs/apk/debug/app-debug.apk
+```
 
 ## Limites connues
 
-- Pas de débogueur pas à pas (breakpoints) ; l'exécution lance un processus neuf.
-- Le quota pip installe dans le **venv de l'IDE** : une mauvaise dépendance peut
-  casser l'IDE. En cas de doute, réinstalle l'environnement.
+- **Pas de Tkinter/Kivy/Pygame natif** dans l'APK : ces boîtes à outils
+  nécessitent un serveur graphique absent d'Android. L'écran graphique
+  `pyide_gui` couvre les besoins de dessin simples, et un module manquant
+  affiche un message explicite.
+- Dans l'app Android, l'installation de paquets est limitée aux **roues pures**
+  (pas de compilation). Les bibliothèques natives doivent être intégrées au
+  build.
+- Le bac à sable Android (SAF) impose de **copier** les fichiers choisis dans le
+  projet ; l'accès direct nécessite la permission « tous les fichiers ».
+- Pas de débogueur pas à pas (breakpoints).
 - Sortie limitée à 512 Ko par exécution et fichiers limités à 5 Mo.
-- Pas d'accès aux paquets de l'environnement Pydroid (sandbox séparée).
 - Le jeton est un secret partagé, pas un système multi-utilisateurs.
-- Une définition située hors du projet (site-packages, bibliothèque standard)
-  affiche un message au lieu d'ouvrir le fichier.
+
+## Licence
+
+Projet personnel de `baa071629-lang`. Monaco est distribué sous licence MIT
+(voir `web/vendor/monaco`).

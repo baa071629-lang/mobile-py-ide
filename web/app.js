@@ -3269,6 +3269,18 @@ function bindUI() {
 /* ---------- démarrage ---------- */
 
 PyTransport.setToken(state.token);
+
+/* Android : retour matériel / reprise de l'application. */
+window.PyIdeBack = function () {
+  if (!$("modal-root").classList.contains("hidden")) { closeModal(); return true; }
+  if (!$("sidebar").classList.contains("hidden")) { closeSidebar(); return true; }
+  if (state.running && !document.body.classList.contains("panel-hidden")) return false;
+  return false;
+};
+window.PyIdeOnResume = function () {
+  loadPlaces().then(() => loadTree(state.currentDir || null, { silent: true }));
+};
+
 bindUI();
 
 const MONACO_BASE = new URL("vendor/monaco/vs", document.baseURI).href;

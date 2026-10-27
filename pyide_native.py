@@ -39,6 +39,14 @@ class BridgeError(Exception):
         self.message = message
 
 
+def _invoke(callback, method: str, *args):
+    """Appelle une méthode d'un objet Kotlin (Chaquopy) ou Python (tests)."""
+    call_attr = getattr(callback, "callAttr", None)
+    if callable(call_attr):
+        return call_attr(method, *args)
+    return getattr(callback, method)(*args)
+
+
 def _reload_server() -> None:
     for name in [m for m in list(sys.modules) if m == "server" or m.startswith("server.")]:
         del sys.modules[name]
@@ -131,8 +139,9 @@ def request(payload_json: str) -> str:
     except BridgeError as exc:
         return json.dumps({"error": exc.message, "status": exc.status}, ensure_ascii=False)
     except Exception as exc:  # noqa: BLE001 - on renvoie l'erreur à l'interface
+        status = getattr(exc, "status_code", 500)
         detail = _friendly_error(exc)
-        return json.dumps({"error": detail, "status": 500}, ensure_ascii=False)
+        return json.dumps({"error": detail, "status": status}, ensure_ascii=False)
 
 
 def _friendly_error(exc: Exception) -> str:
@@ -283,7 +292,7 @@ def start_run(payload_json: str, run_id: str, callback) -> str:
         message = dict(event)
         message["runId"] = run_id
         try:
-            callback.callAttr("onEvent", run_id, json.dumps(message, ensure_ascii=False))
+            _invoke(callback, "onEvent", run_id, json.dumps(message, ensure_ascii=False))
         except Exception:
             pass
 
