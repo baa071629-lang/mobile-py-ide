@@ -261,7 +261,9 @@ def _definition(payload: dict):
             location["external"] = False
             continue
         try:
-            location["rel"] = files.relpath(files.safe_path(location["path"]))
+            resolved = files.safe_path(location["path"])
+            location["rel"] = files.relpath(resolved)
+            location["absPath"] = str(resolved)
             location["external"] = False
         except Exception:
             location["external"] = True

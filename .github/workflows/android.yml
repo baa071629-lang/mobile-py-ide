@@ -50,7 +50,22 @@ jobs:
 
       - name: Compiler l'APK
         working-directory: android
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
+
+      - name: Publier le journal en cas d'échec
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "### Échec du build APK — fin du journal"
+            echo '```'
+            tail -c 30000 /tmp/build.log 2>/dev/null || echo "(journal indisponible)"
+            echo '```'
+          } > /tmp/comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/comment.md || true
 
       - name: Publier l'APK (artefact)
         uses: actions/upload-artifact@v4

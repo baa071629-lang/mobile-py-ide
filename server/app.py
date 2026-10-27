@@ -139,6 +139,7 @@ async def api_definition(request: Request):
         try:
             path = Path(location["path"]).resolve()
             location["rel"] = files.relpath(path)
+            location["absPath"] = str(path)
             location["external"] = False
         except (ValueError, OSError):
             location["rel"] = None

@@ -978,14 +978,15 @@ function registerProviders() {
             uri: model.uri,
             range: new monaco.Range(location.line, location.column, location.line, location.column + 1),
           });
-        } else if (location.rel) {
-          if (location.rel === entry.path) {
+        } else if (location.absPath || location.path || location.rel) {
+          const targetPath = location.absPath || location.path || location.rel;
+          if (targetPath === entry.path) {
             results.push({
               uri: model.uri,
               range: new monaco.Range(location.line, location.column, location.line, location.column + 1),
             });
           } else {
-            const target = await openFile(location.rel, {
+            const target = await openFile(targetPath, {
               line: location.line,
               column: location.column,
               focus: true,
@@ -1362,21 +1363,21 @@ async function renameEntry(entry) {
   const value = await modalPrompt({
     title: "Renommer",
     label: "Nouveau chemin",
-    value: entry.rel,
+    value: entry.path,
     confirmLabel: "Renommer",
   });
-  if (!value || value === entry.rel) return;
+  if (!value || value === entry.path) return;
   try {
     const data = await api("/api/rename", {
       method: "POST",
-      body: JSON.stringify({ path: entry.rel, newPath: value }),
+      body: JSON.stringify({ path: entry.path, newPath: value }),
     });
     for (const open of state.entries.values()) {
-      if (open.path === entry.rel) {
+      if (open.path === entry.path) {
         open.path = data.path;
         open.name = basename(data.path);
-      } else if (open.path && open.path.startsWith(`${entry.rel}/`)) {
-        open.path = `${data.path}/${open.path.slice(entry.rel.length + 1)}`;
+      } else if (open.path && open.path.startsWith(`${entry.path}/`)) {
+        open.path = `${data.path}/${open.path.slice(entry.path.length + 1)}`;
       }
     }
     renderTabs();
@@ -1400,11 +1401,11 @@ async function deleteEntry(entry) {
   try {
     await api("/api/delete", {
       method: "POST",
-      body: JSON.stringify({ path: entry.rel }),
+      body: JSON.stringify({ path: entry.path }),
     });
     const toClose = [];
     for (const open of state.entries.values()) {
-      if (open.path === entry.rel || (open.path && open.path.startsWith(`${entry.rel}/`))) {
+      if (open.path === entry.path || (open.path && open.path.startsWith(`${entry.path}/`))) {
         toClose.push(open.key);
       }
     }
