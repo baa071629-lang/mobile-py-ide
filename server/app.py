@@ -332,19 +332,23 @@ async def _pump_gfx(path: Path | None, queue: asyncio.Queue,
         try:
             if not path.exists():
                 continue
-            with path.open("r", encoding="utf-8", errors="replace") as handle:
+            with path.open("rb") as handle:
                 handle.seek(offset)
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(event, dict):
-                        queue.put_nowait(event)
-                offset = handle.tell()
+                chunk = handle.read()
+            end = chunk.rfind(b"\n")
+            if end < 0:
+                continue
+            for line in chunk[: end + 1].split(b"\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line.decode("utf-8", "replace"))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    queue.put_nowait(event)
+            offset += end + 1
         except OSError:
             continue
 

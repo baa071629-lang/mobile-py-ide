@@ -229,6 +229,22 @@ class GraphicsServerTestCase(unittest.TestCase):
         self.assertEqual(frame["op"], "frame")
         self.assertEqual(frame["ops"][0]["op"], "line")
 
+    def test_ligne_partielle_conservee(self):
+        from server import gfxserver
+
+        path = tempfile.mktemp(suffix=".jsonl")
+        os.environ["PYIDE_GFX_IN"] = path
+        server = gfxserver.GraphicsServer()
+        ligne = json.dumps({"type": "mouse", "action": "up", "x": 7, "y": 9})
+        # Écriture en cours : pas de saut de ligne final.
+        Path(path).write_text(ligne[:12], encoding="utf-8")
+        self.assertEqual(server.poll(), [])
+        Path(path).write_text(ligne[:12] + ligne[12:] + "\n", encoding="utf-8")
+        events = server.poll()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(server.mouse, (7, 9))
+        self.assertEqual(server.poll(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

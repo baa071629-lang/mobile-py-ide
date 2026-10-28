@@ -147,17 +147,23 @@ class GraphicsServer:
         try:
             if not path.exists():
                 return
-            with path.open("r", encoding="utf-8", errors="replace") as handle:
+            with path.open("rb") as handle:
                 handle.seek(self._in_offset)
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        self.push_event(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
-                self._in_offset = handle.tell()
+                chunk = handle.read()
+            # On ne consomme que les lignes terminées : une écriture en cours
+            # reste dans le fichier pour la lecture suivante.
+            end = chunk.rfind(b"\n")
+            if end < 0:
+                return
+            for line in chunk[: end + 1].split(b"\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    self.push_event(json.loads(line.decode("utf-8", "replace")))
+                except json.JSONDecodeError:
+                    continue
+            self._in_offset += end + 1
         except OSError:
             return
 
