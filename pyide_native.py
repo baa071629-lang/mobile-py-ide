@@ -318,6 +318,18 @@ def run_input(run_id: str, text: str) -> bool:
     return session.send_stdin(text)
 
 
+def gfx_event(run_id: str, payload: str) -> bool:
+    """Événement tactile / clavier envoyé au programme en cours (pygame, tkinter)."""
+    session = _state["runs"].get(run_id)
+    if not session:
+        return False
+    try:
+        event = json.loads(payload or "{}")
+    except json.JSONDecodeError:
+        return False
+    return session.gfx_event(event)
+
+
 def run_close_stdin(run_id: str) -> bool:
     session = _state["runs"].get(run_id)
     if not session:

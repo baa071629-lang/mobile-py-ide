@@ -38,6 +38,19 @@ body[data-theme="light"] {
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Aucun menu contextuel système (recherche Google, partage, compte…) :
+   l'IDE gère lui-même les appuis longs. */
+body {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#editor, #editor *, #terminal-body, #modal-body, input, textarea, .selectable {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 html, body {
   height: 100%;
   overflow: hidden;
@@ -212,37 +225,22 @@ button:disabled { opacity: .45; cursor: default; }
 }
 
 #main {
-  --panel-size: 38%;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+
+/* Une seule page à l'écran : éditeur OU sortie (jamais les deux tassés). */
+.page {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  background: var(--bg);
 }
-#main[data-split="h"] { flex-direction: column; }
-#main[data-split="v"] { flex-direction: row; }
-
-/* Éditeur et sortie sont deux zones distinctes, séparées par une poignée. */
-#splitter {
-  flex: 0 0 7px;
-  position: relative;
-  background: var(--bg3);
-  touch-action: none;
-  cursor: row-resize;
-  z-index: 12;
-}
-#main[data-split="v"] #splitter { cursor: col-resize; }
-#splitter::after {
-  content: "";
-  position: absolute;
-  inset: 1px;
-  border-radius: 3px;
-  background: var(--border);
-  opacity: .55;
-}
-#splitter:hover::after, body.dragging #splitter::after { background: var(--accent); opacity: 1; }
-body.dragging { -webkit-user-select: none; user-select: none; }
-
 #editor-wrap {
   flex: 1 1 0;
   min-height: 0;
@@ -253,6 +251,38 @@ body.dragging { -webkit-user-select: none; user-select: none; }
 #editor {
   position: absolute;
   inset: 0;
+}
+
+/* ---------- sélecteur de page ---------- */
+
+#page-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg3);
+  border-radius: 8px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+#page-switch button {
+  position: relative;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 11.5px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+#page-switch button.active { background: var(--bg); color: var(--fg); font-weight: 600; }
+#page-switch .dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
 }
 
 /* ---------- barre latérale ---------- */
@@ -341,22 +371,22 @@ body.dragging { -webkit-user-select: none; user-select: none; }
 
 /* ---------- panneau inférieur ---------- */
 
-#panel {
-  flex: 0 0 var(--panel-size, 38%);
-  min-height: 120px;
-  min-width: 0;
+#page-output {
   background: var(--bg2);
-  border-top: 1px solid var(--border);
+}
+.page-head {
   display: flex;
-  flex-direction: column;
-  z-index: 10;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+  min-height: 38px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--bg2);
+  flex-shrink: 0;
 }
-#main[data-split="v"] #panel {
-  border-top: none;
-  border-left: 1px solid var(--border);
-}
-body.panel-hidden #panel,
-body.panel-hidden #splitter { display: none; }
+.page-head::-webkit-scrollbar { display: none; }
 #panel-head {
   display: flex;
   align-items: center;
@@ -821,6 +851,7 @@ body.panel-hidden #splitter { display: none; }
 #graphics-canvas {
   max-width: 100%;
   height: auto;
+  touch-action: none;
   background: #101018;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -843,6 +874,72 @@ body.panel-hidden #splitter { display: none; }
   pointer-events: none;
 }
 #graphics-empty code { font-family: var(--mono); color: var(--accent); }
+
+/* ---------- graphique plein écran ---------- */
+
+body.gfx-fullscreen #topbar,
+body.gfx-fullscreen #statusbar,
+body.gfx-fullscreen #keybar,
+body.gfx-fullscreen #sidebar,
+body.gfx-fullscreen #backdrop,
+body.gfx-fullscreen #toast { display: none !important; }
+
+body.gfx-fullscreen #page-output {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: #000;
+}
+body.gfx-fullscreen #page-output .page-head,
+body.gfx-fullscreen #graphics-toolbar { display: none !important; }
+body.gfx-fullscreen #graphics-view { display: flex !important; }
+body.gfx-fullscreen #terminal-view,
+body.gfx-fullscreen #problems-view { display: none !important; }
+body.gfx-fullscreen #graphics-stage {
+  padding: 0;
+  gap: 0;
+  background: #000;
+  align-items: stretch;
+  justify-content: stretch;
+  overflow: hidden;
+}
+body.gfx-fullscreen #graphics-canvas {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  border: none;
+  border-radius: 0;
+  touch-action: none;
+  image-rendering: auto;
+}
+body.gfx-fullscreen #graphics-empty { display: none !important; }
+body.gfx-fullscreen #graphics-images {
+  position: absolute;
+  inset: 0;
+  justify-content: center;
+}
+body.gfx-fullscreen .gfx-image { border: none; background: #000; }
+
+.gfx-exit {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, .35);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 12px;
+  backdrop-filter: blur(6px);
+}
+.gfx-exit:active { background: rgba(255, 255, 255, .2); }
+
+@media (min-width: 980px) {
+  body.gfx-fullscreen #page-output { position: fixed; }
+}
 
 @media (max-height: 560px) {
   #keybar { --keybar-h: 38px; }

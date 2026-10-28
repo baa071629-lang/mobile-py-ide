@@ -139,6 +139,19 @@ class PyBridge(
     }
 
     @JavascriptInterface
+    fun gfxEvent(runId: String, payload: String) {
+        try {
+            module.callAttr("gfx_event", runId, payload)
+        } catch (_: Throwable) {
+        }
+    }
+
+    @JavascriptInterface
+    fun setImmersive(enabled: Boolean, landscape: Boolean) {
+        activity.setImmersive(enabled, landscape)
+    }
+
+    @JavascriptInterface
     fun stopRun(runId: String) {
         try {
             module.callAttr("stop_run", runId)

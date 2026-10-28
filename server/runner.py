@@ -15,6 +15,7 @@ from typing import Awaitable, Callable
 from .config import MAX_OUTPUT_BYTES, MAX_RUN_SECONDS, PROJECTS_ROOT, USER_SITE
 
 APP_DIR = Path(__file__).resolve().parent.parent
+SHIMS_DIR = APP_DIR / "shims"
 from .files import ApiError, resolve_for_run
 
 OutputCallback = Callable[[str, str], Awaitable[None]]
@@ -27,6 +28,7 @@ class RunSpec:
     timeout: float
     temp_file: Path | None = None
     gfx_file: Path | None = None
+    gfx_in: Path | None = None
     env: dict[str, str] = field(default_factory=dict)
 
 
@@ -86,6 +88,7 @@ def build_spec(code: str | None, path: str | None, args: list[str] | None = None
 
     env = os.environ.copy()
     gfx_file = cwd / f".pyide-gfx-{uuid.uuid4().hex[:10]}.jsonl"
+    gfx_in = cwd / f".pyide-gfxin-{uuid.uuid4().hex[:10]}.jsonl"
     paths = [str(APP_DIR)]
     if USER_SITE.is_dir():
         paths.insert(0, str(USER_SITE))
@@ -99,12 +102,14 @@ def build_spec(code: str | None, path: str | None, args: list[str] | None = None
         "MPLBACKEND": env.get("MPLBACKEND", "Agg"),
         "PYTHONPATH": os.pathsep.join(paths),
         "PYIDE_GFX_FILE": str(gfx_file),
+        "PYIDE_GFX_IN": str(gfx_in),
+        "PYIDE_SHIMS": str(SHIMS_DIR),
         "PYIDE_IN_IDE": "1",
     })
     env.pop("PYTHONSTARTUP", None)
 
     return RunSpec(cmd=cmd, cwd=cwd, timeout=timeout, temp_file=temp_file,
-                   gfx_file=gfx_file, env=env)
+                   gfx_file=gfx_file, gfx_in=gfx_in, env=env)
 
 
 class RunSession:
@@ -249,12 +254,15 @@ class RunSession:
         )
 
     def _cleanup_temp(self) -> None:
-        if self.spec.gfx_file:
+        for attr in ("gfx_file", "gfx_in"):
+            path = getattr(self.spec, attr)
+            if path is None:
+                continue
             try:
-                self.spec.gfx_file.unlink(missing_ok=True)
+                path.unlink(missing_ok=True)
             except OSError:
                 pass
-            self.spec.gfx_file = None
+            setattr(self.spec, attr, None)
         if self.spec.temp_file:
             try:
                 self.spec.temp_file.unlink(missing_ok=True)

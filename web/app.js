@@ -75,8 +75,9 @@ const state = {
   run: null,
   places: [],
   place: null,
-  splitSize: null,
-  splitVertical: false,
+  page: "editor",
+  gfxFullscreen: false,
+  gfxDrawn: false,
   lastPrompt: "",
   stdinHistory: [],
   stdinHistoryIndex: -1,
@@ -509,9 +510,6 @@ function initMonaco() {
     $("sidebar").setAttribute("aria-hidden", "false");
   }
 
-  if (window.matchMedia("(min-width: 900px)").matches) {
-    document.body.classList.remove("panel-hidden");
-  }
   loadHealth().then(loadPlaces).then(() => {
     const start = (state.place && state.place.path) || "";
     loadTree(start);
@@ -534,8 +532,7 @@ function applySettings() {
   if (meta) meta.setAttribute("content", settings.theme === "light" ? "#eff1f5" : "#1e1e2e");
   $("keybar").classList.toggle("hidden", !settings.keybar);
   $("status-indent").textContent = `Espaces : ${settings.tabSize}`;
-  state.splitSize = Number(settings.splitSize) || null;
-  layoutSplit();
+  showPage(state.page || "editor");
 
   if (!state.monacoReady || !state.editor) return;
   monaco.editor.setTheme(settings.theme === "light" ? "pyide-light" : "pyide-dark");
@@ -1585,10 +1582,26 @@ function termStatus(text) {
   $("terminal-status").textContent = text;
 }
 
-/* ---------- mise en page éditeur / sortie ---------- */
+/* ---------- pages : éditeur OU sortie, jamais tassés ensemble ---------- */
 
-function openPanel(tab = "terminal") {
-  document.body.classList.remove("panel-hidden");
+function showPage(page) {
+  const target = page === "output" ? "output" : "editor";
+  state.page = target;
+  $("page-editor").classList.toggle("hidden", target !== "editor");
+  $("page-output").classList.toggle("hidden", target !== "output");
+  document.querySelectorAll("#page-switch button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.page === target);
+  });
+  if (target === "output") {
+    $("output-dot").classList.add("hidden");
+    if (state.panel === "graphics") gfxRender();
+  }
+  if (state.monacoReady && state.editor) {
+    setTimeout(() => state.editor.layout(), 20);
+  }
+}
+
+function selectOutputTab(tab) {
   state.panel = tab;
   document.querySelectorAll(".panel-tab").forEach((button) => {
     button.classList.toggle("active", button.dataset.panel === tab);
@@ -1596,90 +1609,53 @@ function openPanel(tab = "terminal") {
   $("terminal-view").classList.toggle("hidden", tab !== "terminal");
   $("graphics-view").classList.toggle("hidden", tab !== "graphics");
   $("problems-view").classList.toggle("hidden", tab !== "problems");
-  layoutSplit();
   if (tab === "graphics") gfxRender();
   if (tab === "terminal" && state.running) setTimeout(() => $("stdin-input").focus(), 60);
 }
 
+/* Ouvre la page de sortie sur un onglet donné. */
+function openPanel(tab = "terminal") {
+  showPage("output");
+  selectOutputTab(tab);
+}
+
+/* Revient à l'éditeur. */
 function closePanel() {
-  document.body.classList.add("panel-hidden");
-  layoutSplit();
+  showPage("editor");
 }
 
 function togglePanel() {
-  if (document.body.classList.contains("panel-hidden")) openPanel(state.panel || "terminal");
-  else closePanel();
+  showPage(state.page === "output" ? "editor" : "output");
 }
 
-function layoutSplit() {
-  const main = $("main");
-  const vertical = window.innerWidth >= 760 && window.innerWidth > window.innerHeight;
-  state.splitVertical = vertical;
-  main.dataset.split = vertical ? "v" : "h";
-  $("splitter").setAttribute("aria-orientation", vertical ? "vertical" : "horizontal");
-  const size = state.splitSize || (vertical ? 46 : 38);
-  main.style.setProperty("--panel-size", `${size}%`);
-  if (state.monacoReady) state.editor.layout();
+/* Signale discrètement qu'il se passe quelque chose dans la sortie. */
+function markOutput() {
+  if (state.page !== "output") $("output-dot").classList.remove("hidden");
 }
 
-function bindSplitter() {
-  const splitter = $("splitter");
-  const main = $("main");
-  let dragging = false;
+/* ---------- exécution / terminal ---------- */
 
-  const move = (event) => {
-    if (!dragging) return;
-    const rect = main.getBoundingClientRect();
-    const point = event.touches ? event.touches[0] : event;
-    let ratio;
-    if (state.splitVertical) {
-      ratio = ((rect.right - point.clientX) / rect.width) * 100;
-    } else {
-      ratio = ((rect.bottom - point.clientY) / rect.height) * 100;
-    }
-    ratio = clamp(ratio, 15, 82);
-    state.splitSize = Math.round(ratio);
-    main.style.setProperty("--panel-size", `${state.splitSize}%`);
-    document.body.classList.remove("panel-hidden");
-    state.settings.splitSize = state.splitSize;
-    if (state.monacoReady) state.editor.layout();
-  };
+function termClear() {
+  $("terminal-body").textContent = "";
+  state.lastPrompt = "";
+}
 
-  const stop = () => {
-    if (!dragging) return;
-    dragging = false;
-    document.body.classList.remove("dragging");
-    saveSettings();
-  };
+function termAppend(text, className = "") {
+  if (!text) return;
+  const body = $("terminal-body");
+  const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 48;
+  const span = document.createElement("span");
+  if (className) span.className = className;
+  span.textContent = text;
+  body.appendChild(span);
+  while (body.textContent.length > 400000 && body.firstChild) {
+    body.removeChild(body.firstChild);
+  }
+  if (nearBottom) body.scrollTop = body.scrollHeight;
+}
 
-  const startDrag = (event) => {
-    dragging = true;
-    document.body.classList.add("dragging");
-    event.preventDefault();
-  };
-
-  splitter.addEventListener("pointerdown", startDrag);
-  splitter.addEventListener("touchstart", startDrag, { passive: false });
-  window.addEventListener("pointermove", move);
-  window.addEventListener("touchmove", move, { passive: false });
-  window.addEventListener("pointerup", stop);
-  window.addEventListener("touchend", stop);
-  splitter.addEventListener("dblclick", () => {
-    state.splitSize = null;
-    state.settings.splitSize = null;
-    saveSettings();
-    layoutSplit();
-  });
-  splitter.addEventListener("keydown", (event) => {
-    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-    event.preventDefault();
-    const delta = event.key === "ArrowUp" ? 4 : -4;
-    state.splitSize = clamp((state.splitSize || 38) + delta, 15, 82);
-    state.settings.splitSize = state.splitSize;
-    main.style.setProperty("--panel-size", `${state.splitSize}%`);
-    if (state.monacoReady) state.editor.layout();
-  });
-  window.addEventListener("resize", layoutSplit);
+function termStatus(text) {
+  $("terminal-status").textContent = text;
 }
 
 /* ---------- exécution / terminal ---------- */
@@ -1865,6 +1841,7 @@ function handleRunEvent(event, ctx) {
     case "stdout":
       termAppend(event.data || "");
       trackPrompt(event.data || "");
+      markOutput();
       break;
     case "stderr": {
       let text = event.data || "";
@@ -1974,13 +1951,16 @@ function stdinHistory(event) {
   }
 }
 
-/* ---------- écran graphique ---------- */
+/* ---------- écran graphique (pygame, tkinter, pyide_gui) ---------- */
 
 function gfxEnsure() {
   if (state.gfx) return state.gfx;
   const canvas = $("graphics-canvas");
   const ctx = canvas.getContext("2d");
-  state.gfx = { canvas, ctx, width: 640, height: 400, background: "#101018", images: 0, drawn: false };
+  state.gfx = {
+    canvas, ctx, width: 640, height: 400, background: "#101018",
+    images: 0, drawn: false, fullscreen: false, title: "",
+  };
   return state.gfx;
 }
 
@@ -1995,6 +1975,7 @@ function gfxReset() {
   gfx.drawn = false;
   $("graphics-images").textContent = "";
   $("graphics-status").textContent = "Aucun affichage";
+  gfxExitFullscreen(false);
   gfxRender();
 }
 
@@ -2002,30 +1983,186 @@ function gfxSetStatus(text) {
   $("graphics-status").textContent = text;
 }
 
-function gfxHandle(event) {
+/* ---------- plein écran ---------- */
+
+function gfxEnterFullscreen(notifyBridge = true) {
   const gfx = gfxEnsure();
-  if (event.op === "open") {
-    gfx.width = event.width || 640;
-    gfx.height = event.height || 400;
-    gfx.background = event.background || "#101018";
+  if (!gfx.drawn && gfx.images === 0 && !gfx.fullscreen) {
+    gfxSetStatus("Lance un programme graphique (pygame, tkinter, pyide_gui)");
+  }
+  state.gfxFullscreen = true;
+  document.body.classList.add("gfx-fullscreen");
+  $("btn-gfx-exit").classList.remove("hidden");
+  showPage("output");
+  selectOutputTab("graphics");
+  if (notifyBridge) PyTransport.setImmersive(true, true);
+  setTimeout(() => {
     gfx.canvas.width = gfx.width;
     gfx.canvas.height = gfx.height;
-    gfx.images = 0;
     gfxRender();
-    gfxSetStatus(`Canevas ${gfx.width}×${gfx.height}`);
-    openPanel("graphics");
-    return;
-  }
-  if (event.op === "clear") {
-    gfx.background = event.color || gfx.background;
+  }, 30);
+}
+
+function gfxExitFullscreen(notifyProgram = false) {
+  if (!state.gfxFullscreen && !document.body.classList.contains("gfx-fullscreen")) return;
+  state.gfxFullscreen = false;
+  document.body.classList.remove("gfx-fullscreen");
+  $("btn-gfx-exit").classList.add("hidden");
+  PyTransport.setImmersive(false, false);
+  if (notifyProgram) gfxSendInput({ type: "quit" });
+  setTimeout(() => {
+    const gfx = gfxEnsure();
+    gfx.canvas.width = gfx.width;
+    gfx.canvas.height = gfx.height;
     gfxRender();
-    openPanel("graphics");
-    return;
+  }, 30);
+}
+
+/* ---------- entrées tactiles et clavier ---------- */
+
+function gfxSendInput(event) {
+  if (!state.run || typeof state.run.gfx !== "function") return false;
+  state.run.gfx(event);
+  return true;
+}
+
+function gfxLogicalPoint(clientX, clientY) {
+  const gfx = gfxEnsure();
+  const rect = gfx.canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return [0, 0];
+  // Le canevas peut être « contenu » (object-fit) : on tient compte des bandes.
+  const ratio = Math.min(rect.width / gfx.width, rect.height / gfx.height);
+  const drawnW = gfx.width * ratio;
+  const drawnH = gfx.height * ratio;
+  const offsetX = rect.left + (rect.width - drawnW) / 2;
+  const offsetY = rect.top + (rect.height - drawnH) / 2;
+  const x = (clientX - offsetX) / ratio;
+  const y = (clientY - offsetY) / ratio;
+  return [Math.round(clamp(x, 0, gfx.width)), Math.round(clamp(y, 0, gfx.height))];
+}
+
+const GFX_KEY_NAMES = {
+  ArrowLeft: "LEFT", ArrowRight: "RIGHT", ArrowUp: "UP", ArrowDown: "DOWN",
+  Escape: "ESCAPE", Enter: "RETURN", " ": "SPACE", Backspace: "BACKSPACE",
+  Tab: "TAB", Shift: "LSHIFT", Control: "LCTRL", Alt: "LALT", Delete: "DELETE",
+};
+
+function gfxKeyEvent(event, down) {
+  const raw = GFX_KEY_NAMES[event.key] || (event.key.length === 1 ? event.key.toUpperCase() : event.key);
+  const payload = { type: "key", name: raw, down, text: down ? event.key : "" };
+  if (event.key.length === 1) payload.code = event.key.charCodeAt(0);
+  gfxSendInput(payload);
+}
+
+function bindGfxInput() {
+  const canvas = $("graphics-canvas");
+  const stage = $("graphics-stage");
+  let pointerDown = false;
+
+  const send = (event, action) => {
+    const [x, y] = gfxLogicalPoint(event.clientX, event.clientY);
+    gfxSendInput({ type: "mouse", action, x, y, button: 1, buttons: [action !== "up", false, false] });
+  };
+
+  stage.addEventListener("pointerdown", (event) => {
+    if (!document.body.classList.contains("gfx-fullscreen")) return;
+    pointerDown = true;
+    stage.setPointerCapture?.(event.pointerId);
+    send(event, "down");
+    event.preventDefault();
+  });
+  stage.addEventListener("pointermove", (event) => {
+    if (!pointerDown) return;
+    send(event, "move");
+  });
+  const release = (event) => {
+    if (!pointerDown) return;
+    pointerDown = false;
+    send(event, "up");
+  };
+  stage.addEventListener("pointerup", release);
+  stage.addEventListener("pointercancel", release);
+  stage.addEventListener("contextmenu", (event) => event.preventDefault());
+
+  window.addEventListener("keydown", (event) => {
+    if (!document.body.classList.contains("gfx-fullscreen")) return;
+    if (event.key === "Escape") {
+      gfxExitFullscreen(true);
+      event.preventDefault();
+      return;
+    }
+    gfxKeyEvent(event, true);
+    event.preventDefault();
+  });
+  window.addEventListener("keyup", (event) => {
+    if (!document.body.classList.contains("gfx-fullscreen")) return;
+    gfxKeyEvent(event, false);
+  });
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+}
+
+/* ---------- rendu ---------- */
+
+function gfxHandle(event) {
+  const gfx = gfxEnsure();
+  switch (event.op) {
+    case "open":
+      gfx.width = Math.max(Number(event.width) || 640, 1);
+      gfx.height = Math.max(Number(event.height) || 400, 1);
+      gfx.background = event.background || "#101018";
+      gfx.title = event.title || "";
+      gfx.canvas.width = gfx.width;
+      gfx.canvas.height = gfx.height;
+      gfx.images = 0;
+      gfx.drawn = false;
+      $("graphics-images").textContent = "";
+      gfxRender();
+      gfxSetStatus(`${gfx.title || "Graphique"} · ${gfx.width}×${gfx.height}`);
+      markOutput();
+      // pygame/tkinter plein écran : on bascule tout de suite l'affichage.
+      if (event.fullscreen) gfxEnterFullscreen(true);
+      else if (state.page === "output") selectOutputTab("graphics");
+      break;
+    case "frame":
+      gfxClearFrame();
+      for (const op of event.ops || []) gfxDrawOp(op);
+      gfx.drawn = true;
+      markOutput();
+      break;
+    case "present":
+      // Rien à faire : les opérations ont déjà été peintes.
+      break;
+    case "clear":
+      gfx.background = event.color || gfx.background;
+      gfxRender();
+      break;
+    case "title":
+      gfx.title = event.title || "";
+      gfxSetStatus(`${gfx.title} · ${gfx.width}×${gfx.height}`);
+      break;
+    case "fullscreen":
+      if (event.value) gfxEnterFullscreen(true);
+      else gfxExitFullscreen(false);
+      break;
+    case "close":
+      gfx.drawn = false;
+      gfxExitFullscreen(false);
+      gfxSetStatus("Programme terminé");
+      break;
+    default:
+      gfx.drawn = true;
+      gfxDrawOp(event);
+      break;
   }
-  gfx.drawn = true;
-  gfxDrawOp(event);
-  if (event.op === "present") openPanel("graphics");
   $("graphics-empty").classList.add("hidden");
+}
+
+function gfxClearFrame() {
+  const gfx = gfxEnsure();
+  // Chaque frame redessine l'écran entier : on repart du fond.
+  gfx.ctx.setTransform(1, 0, 0, 1, 0, 0);
+  gfx.ctx.fillStyle = gfx.background || "#000";
+  gfx.ctx.fillRect(0, 0, gfx.canvas.width, gfx.canvas.height);
 }
 
 function gfxDrawOp(op) {
@@ -2035,27 +2172,64 @@ function gfxDrawOp(op) {
   const scaleY = gfx.canvas.height / Math.max(gfx.height, 1);
   ctx.save();
   ctx.setTransform(scale, 0, 0, scaleY, 0, 0);
+  const lineWidth = Math.max(Number(op.width) || 1, 0.5);
   switch (op.op) {
+    case "clear":
+      gfx.background = op.color || "#000";
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = gfx.background;
+      ctx.fillRect(0, 0, gfx.canvas.width, gfx.canvas.height);
+      break;
     case "rect":
       ctx.beginPath();
       ctx.rect(op.x, op.y, op.w, op.h);
       if (op.fill) { ctx.fillStyle = op.color || "#fff"; ctx.fill(); }
-      else { ctx.lineWidth = op.width || 1; ctx.strokeStyle = op.color || "#fff"; ctx.stroke(); }
+      else { ctx.lineWidth = lineWidth; ctx.strokeStyle = op.color || "#fff"; ctx.stroke(); }
       break;
     case "circle":
       ctx.beginPath();
       ctx.arc(op.x, op.y, Math.max(op.r, 0), 0, Math.PI * 2);
       if (op.fill) { ctx.fillStyle = op.color || "#fff"; ctx.fill(); }
-      else { ctx.lineWidth = op.width || 1; ctx.strokeStyle = op.color || "#fff"; ctx.stroke(); }
+      else { ctx.lineWidth = lineWidth; ctx.strokeStyle = op.color || "#fff"; ctx.stroke(); }
       break;
+    case "ellipse":
+      ctx.beginPath();
+      ctx.ellipse(op.x + op.w / 2, op.y + op.h / 2,
+        Math.abs(op.w / 2), Math.abs(op.h / 2), 0, 0, Math.PI * 2);
+      if (op.fill) { ctx.fillStyle = op.color || "#fff"; ctx.fill(); }
+      else { ctx.lineWidth = lineWidth; ctx.strokeStyle = op.color || "#fff"; ctx.stroke(); }
+      break;
+    case "arc": {
+      ctx.beginPath();
+      const start = (-Number(op.start || 0)) * Math.PI / 180;
+      const stop = (-Number(op.stop || 0)) * Math.PI / 180;
+      ctx.ellipse(op.x + op.w / 2, op.y + op.h / 2, Math.abs(op.w / 2),
+        Math.abs(op.h / 2), 0, start, stop);
+      ctx.lineWidth = lineWidth;
+      ctx.strokeStyle = op.color || "#fff";
+      ctx.stroke();
+      break;
+    }
     case "line":
       ctx.beginPath();
       ctx.moveTo(op.x1, op.y1);
       ctx.lineTo(op.x2, op.y2);
-      ctx.lineWidth = op.width || 1;
+      ctx.lineWidth = lineWidth;
       ctx.strokeStyle = op.color || "#fff";
       ctx.stroke();
       break;
+    case "lines": {
+      const points = op.points || [];
+      if (points.length < 2) break;
+      ctx.beginPath();
+      ctx.moveTo(points[0][0], points[0][1]);
+      for (const [x, y] of points.slice(1)) ctx.lineTo(x, y);
+      if (op.closed) ctx.closePath();
+      ctx.lineWidth = lineWidth;
+      ctx.strokeStyle = op.color || "#fff";
+      ctx.stroke();
+      break;
+    }
     case "polygon": {
       const points = op.points || [];
       if (points.length < 2) break;
@@ -2064,15 +2238,22 @@ function gfxDrawOp(op) {
       for (const [x, y] of points.slice(1)) ctx.lineTo(x, y);
       ctx.closePath();
       if (op.fill) { ctx.fillStyle = op.color || "#fff"; ctx.fill(); }
-      else { ctx.lineWidth = 1; ctx.strokeStyle = op.color || "#fff"; ctx.stroke(); }
+      else { ctx.lineWidth = lineWidth; ctx.strokeStyle = op.color || "#fff"; ctx.stroke(); }
       break;
     }
-    case "text":
+    case "text": {
+      const size = Number(op.size) || 14;
       ctx.fillStyle = op.color || "#fff";
-      ctx.font = `${op.size || 14}px ui-monospace, monospace`;
+      ctx.font = `${op.bold ? "bold " : ""}${op.italic ? "italic " : ""}${size}px ` +
+        (op.font || "ui-monospace, monospace");
       ctx.textBaseline = "top";
-      ctx.fillText(String(op.value ?? ""), op.x, op.y);
+      ctx.textAlign = op.align === "center" ? "center" : "left";
+      const lines = String(op.value ?? "").split("\n");
+      lines.forEach((line, index) => {
+        ctx.fillText(line, op.x, op.y + index * size * 1.35);
+      });
       break;
+    }
     case "pixel":
       ctx.fillStyle = op.color || "#fff";
       ctx.fillRect(op.x, op.y, 1, 1);
@@ -2088,26 +2269,35 @@ function gfxDrawOp(op) {
 
 function gfxBlit(op) {
   const gfx = gfxEnsure();
+  const source = String(op.data || "");
   const image = new Image();
   image.onload = () => {
     const scale = gfx.canvas.width / Math.max(gfx.width, 1);
-    gfx.ctx.drawImage(image, op.x || 0, op.y || 0,
-      image.width * scale, image.height * scale);
+    const scaleY = gfx.canvas.height / Math.max(gfx.height, 1);
+    const width = (op.w || image.width) * scale;
+    const height = (op.h || image.height) * scaleY;
+    gfx.ctx.drawImage(image, (op.x || 0) * scale, (op.y || 0) * scaleY, width, height);
   };
-  image.src = `data:image/png;base64,${op.data}`;
+  image.src = source.startsWith("data:") ? source : `data:image/png;base64,${source}`;
 }
 
 function gfxShowImage(event) {
   const gfx = gfxEnsure();
+  const source = String(event.data || "");
   const wrap = el("div", { class: "gfx-image" },
     event.title ? el("div", { class: "gfx-image-title", text: event.title }) : null,
-    el("img", { src: `data:image/png;base64,${event.data}`, alt: event.title || "image" }),
+    el("img", {
+      src: source.startsWith("data:") ? source : `data:image/png;base64,${source}`,
+      alt: event.title || "image",
+    }),
   );
   $("graphics-images").appendChild(wrap);
   gfx.images += 1;
   $("graphics-empty").classList.add("hidden");
   gfxSetStatus(event.title ? `Image : ${event.title}` : "Image affichée");
-  openPanel("graphics");
+  if (event.fullscreen !== false) gfxEnterFullscreen(true);
+  else openPanel("graphics");
+  markOutput();
 }
 
 function gfxRender() {
@@ -2255,7 +2445,9 @@ function buildCommands() {
     { title: "Aide sur le symbole (documentation)", run: () => runEditorAction("editor.action.showHover") },
     { title: "Aller à la définition", run: () => runEditorAction("editor.action.revealDefinition") },
     { title: "Formater le code (autopep8)", run: () => formatActive() },
-    { title: "Basculer le terminal", run: () => (state.panel === "terminal" && !$("panel").classList.contains("hidden") ? closePanel() : openPanel("terminal")) },
+    { title: "Voir la sortie du programme", run: () => openPanel("terminal") },
+    { title: "Basculer éditeur / sortie", run: () => togglePanel() },
+    { title: "Graphique en plein écran", run: () => gfxEnterFullscreen(false) },
     { title: "Voir les problèmes", run: () => openPanel("problems") },
     { title: "Afficher / masquer les fichiers", hint: "Ctrl+Maj+E", run: () => toggleSidebar() },
     { title: "Exemples de code", run: () => showSnippets() },
@@ -2992,10 +3184,10 @@ function showSettings() {
           lint: lint.checked,
           showHidden: hidden.checked,
           keybar: keybar.checked,
-          splitSize: state.splitSize,
         };
         state.token = token.value.trim();
         PyTransport.setToken(state.token);
+
         if (state.token) localStorage.setItem(TOKEN_KEY, state.token);
         else localStorage.removeItem(TOKEN_KEY);
         saveSettings();
@@ -3224,7 +3416,11 @@ function bindUI() {
 
   $("btn-save").addEventListener("click", saveActive);
   $("btn-run").addEventListener("click", runActive);
-  $("btn-split").addEventListener("click", togglePanel);
+  document.querySelectorAll("#page-switch button").forEach((button) => {
+    button.addEventListener("click", () => showPage(button.dataset.page));
+  });
+  $("btn-gfx-full").addEventListener("click", () => gfxEnterFullscreen(true));
+  $("btn-gfx-exit").addEventListener("click", () => gfxExitFullscreen(true));
   $("btn-more").addEventListener("click", showMoreMenu);
   $("btn-console").addEventListener("click", startConsole);
   $("btn-terminal-clear").addEventListener("click", termClear);
@@ -3239,8 +3435,7 @@ function bindUI() {
     if (parent) loadTree(parent);
     else toast("Déjà à la racine de cet emplacement");
   });
-  bindSplitter();
-  layoutSplit();
+  bindGfxInput();
 
   document.querySelectorAll(".panel-tab").forEach((button) => {
     button.addEventListener("click", () => openPanel(button.dataset.panel));
@@ -3270,16 +3465,28 @@ function bindUI() {
 
 PyTransport.setToken(state.token);
 
+
 /* Android : retour matériel / reprise de l'application. */
 window.PyIdeBack = function () {
+  if (document.body.classList.contains("gfx-fullscreen")) { gfxExitFullscreen(true); return true; }
   if (!$("modal-root").classList.contains("hidden")) { closeModal(); return true; }
   if (!$("sidebar").classList.contains("hidden")) { closeSidebar(); return true; }
-  if (state.running && !document.body.classList.contains("panel-hidden")) return false;
+  if (state.page === "output") { showPage("editor"); return true; }
   return false;
 };
 window.PyIdeOnResume = function () {
   loadPlaces().then(() => loadTree(state.currentDir || null, { silent: true }));
 };
+
+/* Un appui long ne doit jamais ouvrir un menu système (Google, partage…). */
+document.addEventListener("contextmenu", (event) => {
+  const target = event.target;
+  const editable = target && (
+    target.closest("#editor") || target.closest("input") ||
+    target.closest("textarea") || target.closest("#terminal-body")
+  );
+  if (!editable) event.preventDefault();
+}, true);
 
 bindUI();
 

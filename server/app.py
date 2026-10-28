@@ -432,6 +432,14 @@ async def ws_run(websocket: WebSocket):
                         await session.send_stdin(data)
                 elif kind == "close_stdin":
                     await session.close_stdin()
+                elif kind == "gfx_input":
+                    payload = message.get("event")
+                    if isinstance(payload, dict) and spec.gfx_in is not None:
+                        try:
+                            with spec.gfx_in.open("a", encoding="utf-8") as handle:
+                                handle.write(json.dumps(payload) + "\n")
+                        except OSError:
+                            pass
                 elif kind == "stop":
                     queue.put_nowait({"type": "stopping"})
                     await session.stop()

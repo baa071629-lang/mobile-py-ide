@@ -23,31 +23,36 @@ import time
 import traceback
 from pathlib import Path
 
-from . import gui
+from . import gui, gfxserver
 from .config import MAX_OUTPUT_BYTES, MAX_RUN_SECONDS, USER_SITE
+
+SHIMS_DIR = Path(__file__).resolve().parent.parent / "shims"
 
 try:  # Chaquopy fournit ctypes, mais on reste tolérant.
     import ctypes
 except ImportError:  # pragma: no cover - dépend de la build Python
     ctypes = None
 
+# Modules réellement indisponibles : les autres (pygame, tkinter) sont fournis
+# par le serveur graphique de l'IDE (dossier `shims/`).
 GRAPHICS_MISSING = {
-    "tkinter": "Tkinter n'est pas disponible dans l'application Android. "
-               "Utilise « from pyide_gui import screen » pour dessiner.",
-    "pygame": "Pygame n'est pas installé. Installe « pygame-ce » depuis l'onglet "
-              "Paquets, ou utilise « pyide_gui » pour un canevas simple.",
-    "kivy": "Kivy n'est pas installé dans cette version. Utilise « pyide_gui » "
-            "ou installe un paquet pur Python depuis l'onglet Paquets.",
-    "turtle": "Le module turtle nécessite Tkinter, absent sur Android. "
-              "Le canevas « pyide_gui » offre les mêmes primitives de dessin.",
+    "kivy": "Kivy n'est pas disponible dans l'application Android. Utilise "
+            "« import pygame » ou « from pyide_gui import screen » : les deux "
+            "affichent en plein écran.",
+    "pygame._sdl2": "Le module SDL2 natif n'est pas disponible : utilise "
+                    "l'API pygame classique (display, draw, surface, font).",
+    "turtle": "Le module turtle nécessite le Tk natif, absent sur Android. "
+              "« tkinter » et « pygame » de l'IDE dessinent en plein écran.",
 }
 
 
 class _MissingToolkitFinder:
     def find_spec(self, fullname, path=None, target=None):  # noqa: D401
-        if fullname in GRAPHICS_MISSING:
-            raise ModuleNotFoundError(GRAPHICS_MISSING[fullname], name=fullname)
-        return None
+        if fullname not in GRAPHICS_MISSING:
+            return None
+        if (SHIMS_DIR / fullname.split(".")[0]).exists():
+            return None
+        raise ModuleNotFoundError(GRAPHICS_MISSING[fullname], name=fullname)
 
 
 _finder = _MissingToolkitFinder()
@@ -261,6 +266,11 @@ class NativeSession:
         return str(PROJECTS_ROOT)
 
     def _prepare(self) -> None:
+        gfxserver.reset()
+        gfxserver.SERVER.bind(self.emit)
+        if str(SHIMS_DIR) not in sys.path:
+            sys.path.append(str(SHIMS_DIR))
+        os.environ["PYIDE_SHIMS"] = str(SHIMS_DIR)
         os.environ.setdefault("MPLBACKEND", "Agg")
         sys.argv = [self.path or "<console>", *self.args]
         sys.path.insert(0, self._cwd())
@@ -343,6 +353,13 @@ class NativeSession:
                 break
             console.push(line.rstrip("\n"))
         self._emit_text("stdout", "\n")
+
+    def gfx_event(self, payload: dict) -> bool:
+        """Transmet un toucher / une touche au programme (pygame, tkinter)."""
+        if self.finished:
+            return False
+        gfxserver.SERVER.push_event(payload)
+        return True
 
     def send_stdin(self, data: str) -> bool:
         if self.finished:

@@ -20,6 +20,12 @@ _EVENTS = os.environ.get("PYIDE_GFX_FILE", "").strip()
 _ACTIVE = bool(os.environ.get("PYIDE_IN_IDE")) and bool(_EVENTS)
 _installed = False
 
+# Le module `pygame` / `tkinter` de l'IDE n'est ajouté qu'en dernier : un vrai
+# paquet installé (pip) garde la priorité.
+_SHIMS = os.environ.get("PYIDE_SHIMS", "").strip()
+if _SHIMS and os.path.isdir(_SHIMS) and _SHIMS not in sys.path:
+    sys.path.append(_SHIMS)
+
 
 def _emit(event: dict) -> None:
     if not _ACTIVE:

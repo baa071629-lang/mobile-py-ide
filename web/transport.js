@@ -207,6 +207,9 @@ const PyTransport = (() => {
       input(text) {
         try { bridge.runInput(runId, String(text)); } catch (_) { /* ignoré */ }
       },
+      gfx(event) {
+        try { bridge.gfxEvent(runId, JSON.stringify(event)); } catch (_) { /* ignoré */ }
+      },
       closeInput() {
         try { bridge.runCloseInput(runId); } catch (_) { /* ignoré */ }
       },
@@ -308,6 +311,7 @@ const PyTransport = (() => {
 
     return {
       input(text) { send({ type: "stdin", data: String(text) }); },
+      gfx(event) { send({ type: "gfx_input", event }); },
       closeInput() { send({ type: "close_stdin" }); },
       stop() { send({ type: "stop" }); },
       dispose() {
@@ -344,6 +348,10 @@ const PyTransport = (() => {
     pickFolder: () => pick("folder"),
     requestStorage() {
       if (state.native) { try { bridge.requestStorage(); } catch (_) { /* ignoré */ } }
+    },
+    setImmersive(enabled, landscape) {
+      if (!state.native) return;
+      try { bridge.setImmersive(!!enabled, !!landscape); } catch (_) { /* ignoré */ }
     },
     deviceInfo() {
       if (!state.native) return { native: false, platform: navigator.platform || "web" };

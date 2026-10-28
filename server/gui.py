@@ -45,13 +45,15 @@ def emit(event: dict) -> None:
 class Canvas:
     """Canevas de dessin en coordonnées logiques (redimensionné côté UI)."""
 
-    def __init__(self, width: int = 640, height: int = 400, background: str = "#101018"):
+    def __init__(self, width: int = 640, height: int = 400, background: str = "#101018",
+                 fullscreen: bool = True, title: str = ""):
         self.width = int(width)
         self.height = int(height)
         self.background = background
         self._ops: list[dict] = []
         emit({"type": "gfx", "op": "open", "width": self.width, "height": self.height,
-              "background": self.background})
+              "background": self.background, "fullscreen": bool(fullscreen),
+              "title": title or "pyide_gui", "mode": "canvas"})
 
     # -- primitives -----------------------------------------------------
     def clear(self, color: str | None = None) -> "Canvas":
@@ -102,9 +104,10 @@ class Canvas:
 _default_canvas: Canvas | None = None
 
 
-def screen(width: int = 640, height: int = 400, background: str = "#101018") -> Canvas:
+def screen(width: int = 640, height: int = 400, background: str = "#101018",
+           fullscreen: bool = True, title: str = "") -> Canvas:
     global _default_canvas
-    _default_canvas = Canvas(width, height, background)
+    _default_canvas = Canvas(width, height, background, fullscreen=fullscreen, title=title)
     return _default_canvas
 
 
