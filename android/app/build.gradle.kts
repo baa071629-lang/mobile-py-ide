@@ -20,9 +20,12 @@ val stagePython = tasks.register<Zip>("stagePythonSources") {
     archiveFileName.set("python-src.zip")
     destinationDirectory.set(stagedAssets)
     from(File(repoRoot, "server")) { into("server") }
+    // Shims pygame/tkinter : écran graphique de l'IDE, indispensables hors Termux.
+    from(File(repoRoot, "shims")) { into("shims") }
     from(File(repoRoot, "pyide_gui.py"))
     from(File(repoRoot, "pyide_native.py"))
     from(File(repoRoot, "sitecustomize.py"))
+    exclude("**/__pycache__/**", "**/*.pyc", "**/*.pyo")
     includeEmptyDirs = false
 }
 
