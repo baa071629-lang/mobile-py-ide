@@ -330,24 +330,10 @@ class MainActivity : Activity() {
  */
 class IdeWebView(context: android.content.Context) : WebView(context) {
 
-    private var lastTouch = 0L
-
     override fun startActionMode(
         callback: android.view.ActionMode.Callback?,
         type: Int,
     ): android.view.ActionMode? = null
 
     override fun startActionMode(callback: android.view.ActionMode.Callback): android.view.ActionMode? = null
-
-    override fun startActionMode(
-        callback: android.view.ActionMode.Callback,
-        type: Int,
-    ): android.view.ActionMode? = null
-
-    override fun onTouchEvent(event: android.view.MotionEvent?): Boolean {
-        if (event != null) {
-            lastTouch = System.currentTimeMillis()
-        }
-        return super.onTouchEvent(event)
-    }
 }
