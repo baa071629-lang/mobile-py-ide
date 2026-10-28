@@ -118,5 +118,11 @@ jobs:
             echo "..."
             unzip -l "$APK" | grep -E "python-src.zip|assets/web/index.html|libpython" | head -8
             echo '```'
+            echo
+            echo "### Shims graphiques embarqués"
+            echo '```'
+            unzip -p "$APK" assets/python-src.zip > /tmp/python-src.zip
+            unzip -l /tmp/python-src.zip | grep -E "shims/" | head -40
+            echo '```'
           } > /tmp/summary.md
           gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/summary.md || true
