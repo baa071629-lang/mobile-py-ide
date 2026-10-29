@@ -246,5 +246,81 @@ class GraphicsServerTestCase(unittest.TestCase):
         self.assertEqual(server.poll(), [])
 
 
+class TransformationsTestCase(unittest.TestCase):
+    """pygame.transform : rotation, retournement et échelle réels."""
+
+    def setUp(self):
+        _prepare_env()
+
+    def _pygame(self):
+        _prepare_env()
+        import importlib
+
+        for name in [n for n in sys.modules if n == "pygame" or n.startswith("pygame.")]:
+            del sys.modules[name]
+        return importlib.import_module("pygame")
+
+    def test_flip_et_rotation(self):
+        pygame = self._pygame()
+        surface = pygame.Surface((100, 50))
+        pygame.draw.rect(surface, (255, 0, 0), (10, 10, 20, 20))
+
+        flipped = pygame.transform.flip(surface, True, False)
+        self.assertEqual(flipped.get_size(), (100, 50))
+        kinds = [op["op"] for op in flipped._ops]
+        self.assertEqual(kinds[0], "push")
+        self.assertEqual(kinds[-1], "pop")
+        matrix = flipped._ops[1]
+        self.assertEqual((matrix["a"], matrix["e"]), (-1.0, 100.0))
+
+        rotated = pygame.transform.rotate(surface, 90)
+        self.assertEqual(rotated.get_size(), (50, 100))
+        self.assertEqual(rotated._ops[1]["op"], "transform")
+
+        scaled = pygame.transform.scale(surface, (200, 100))
+        self.assertEqual(scaled.get_size(), (200, 100))
+        self.assertAlmostEqual(scaled._ops[1]["a"], 2.0)
+
+    def test_sauvegarde_png(self):
+        try:
+            import PIL  # noqa: F401
+        except ImportError:  # pragma: no cover
+            self.skipTest("Pillow absent")
+        pygame = self._pygame()
+        surface = pygame.Surface((80, 40))
+        pygame.draw.rect(surface, (0, 128, 255), (0, 0, 80, 40))
+        pygame.draw.circle(surface, (255, 255, 0), (40, 20), 10)
+        target = Path(tempfile.mktemp(suffix=".png"))
+        pygame.image.save(surface, str(target))
+        from PIL import Image
+
+        with Image.open(target) as picture:
+            self.assertEqual(picture.size, (80, 40))
+            self.assertEqual(picture.getpixel((2, 2))[:3], (0, 128, 255))
+            self.assertEqual(picture.getpixel((40, 20))[:3], (255, 255, 0))
+
+    def test_blit_surface_transformee(self):
+        from server import gfxserver
+
+        pygame = self._pygame()
+        emitted: list[dict] = []
+        gfxserver.SERVER.bind(emitted.append)
+        screen = pygame.display.set_mode((320, 240), pygame.FULLSCREEN)
+        source = pygame.Surface((60, 30))
+        pygame.draw.rect(source, (0, 255, 0), (0, 0, 60, 30))
+        screen.fill((0, 0, 0))
+        screen.blit(pygame.transform.rotate(source, 90), (40, 50))
+        pygame.display.flip()
+        frames = [event for event in emitted if event.get("op") == "frame"]
+        self.assertTrue(frames)
+        ops = frames[-1]["ops"]
+        pushes = [op for op in ops if op["op"] == "push"]
+        pops = [op for op in ops if op["op"] == "pop"]
+        self.assertEqual(len(pushes), len(pops))
+        translations = [op for op in ops if op["op"] == "transform"
+                        and (op["e"], op["f"]) == (40.0, 50.0)]
+        self.assertTrue(translations)
+
+
 if __name__ == "__main__":
     unittest.main()

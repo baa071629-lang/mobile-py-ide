@@ -327,30 +327,41 @@ async def _pump_gfx(path: Path | None, queue: asyncio.Queue,
     if path is None:
         return
     offset = 0
-    while not wait_task.done():
-        await asyncio.sleep(0.12)
+
+    def read_new() -> None:
+        """Transmet les lignes complètes ; une ligne en cours d'écriture attend."""
+        nonlocal offset
         try:
             if not path.exists():
-                continue
+                return
             with path.open("rb") as handle:
                 handle.seek(offset)
                 chunk = handle.read()
-            end = chunk.rfind(b"\n")
-            if end < 0:
-                continue
-            for line in chunk[: end + 1].split(b"\n"):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line.decode("utf-8", "replace"))
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(event, dict):
-                    queue.put_nowait(event)
-            offset += end + 1
         except OSError:
-            continue
+            return
+        end = chunk.rfind(b"\n")
+        if end < 0:
+            return
+        for line in chunk[: end + 1].split(b"\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line.decode("utf-8", "replace"))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict):
+                queue.put_nowait(event)
+        offset += end + 1
+
+    while True:
+        finished = wait_task.done()
+        if not finished:
+            await asyncio.sleep(0.12)
+        read_new()
+        if finished:
+            # Dernière lecture après la fin du programme : aucune image perdue.
+            return
 
 
 async def ws_run(websocket: WebSocket):
@@ -454,7 +465,15 @@ async def ws_run(websocket: WebSocket):
 
         result = await wait_task
         if gfx_task:
-            gfx_task.cancel()
+            # On laisse le relais graphique finir sa dernière lecture, sinon les
+            # toutes dernières images du programme seraient perdues.
+            try:
+                await asyncio.wait_for(gfx_task, timeout=1.5)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                gfx_task.cancel()
+            except Exception:
+                pass
+            session.cleanup()
         queue.put_nowait({
             "type": "exit",
             "code": result.code,
@@ -476,6 +495,7 @@ async def ws_run(websocket: WebSocket):
             gfx_task.cancel()
         if session:
             await session.stop()
+            session.cleanup()
         queue.put_nowait(None)
         try:
             await asyncio.wait_for(sender_task, timeout=2)

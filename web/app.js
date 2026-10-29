@@ -1960,8 +1960,29 @@ function gfxEnsure() {
   state.gfx = {
     canvas, ctx, width: 640, height: 400, background: "#101018",
     images: 0, drawn: false, fullscreen: false, title: "",
+    matrix: [1, 0, 0, 1, 0, 0], matrixStack: [],
   };
   return state.gfx;
+}
+
+const GFX_IDENTITY = [1, 0, 0, 1, 0, 0];
+
+// Composition de deux matrices affines [a, b, c, d, e, f] (m1 puis m2).
+function gfxMultiply(m1, m2) {
+  return [
+    m1[0] * m2[0] + m1[2] * m2[1],
+    m1[1] * m2[0] + m1[3] * m2[1],
+    m1[0] * m2[2] + m1[2] * m2[3],
+    m1[1] * m2[2] + m1[3] * m2[3],
+    m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+    m1[1] * m2[4] + m1[3] * m2[5] + m1[5],
+  ];
+}
+
+function gfxResetTransform() {
+  const gfx = gfxEnsure();
+  gfx.matrix = GFX_IDENTITY.slice();
+  gfx.matrixStack = [];
 }
 
 function gfxReset() {
@@ -1973,6 +1994,7 @@ function gfxReset() {
   gfx.canvas.height = gfx.height;
   gfx.images = 0;
   gfx.drawn = false;
+  gfxResetTransform();
   $("graphics-images").textContent = "";
   $("graphics-status").textContent = "Aucun affichage";
   gfxExitFullscreen(false);
@@ -1993,6 +2015,8 @@ function gfxEnterFullscreen(notifyBridge = true) {
   state.gfxFullscreen = true;
   document.body.classList.add("gfx-fullscreen");
   $("btn-gfx-exit").classList.remove("hidden");
+  $("gfx-pad").classList.remove("hidden");
+  gfxPadApply();
   showPage("output");
   selectOutputTab("graphics");
   if (notifyBridge) PyTransport.setImmersive(true, true);
@@ -2008,6 +2032,8 @@ function gfxExitFullscreen(notifyProgram = false) {
   state.gfxFullscreen = false;
   document.body.classList.remove("gfx-fullscreen");
   $("btn-gfx-exit").classList.add("hidden");
+  $("gfx-pad").classList.add("hidden");
+  if (typeof gfxPadReleaseAll === "function") gfxPadReleaseAll();
   PyTransport.setImmersive(false, false);
   if (notifyProgram) gfxSendInput({ type: "quit" });
   setTimeout(() => {
@@ -2052,6 +2078,88 @@ function gfxKeyEvent(event, down) {
   const payload = { type: "key", name: raw, down, text: down ? event.key : "" };
   if (event.key.length === 1) payload.code = event.key.charCodeAt(0);
   gfxSendInput(payload);
+}
+
+/* ---------- manette tactile (plein écran) ---------- */
+
+const GFX_PAD_TEXT = { SPACE: " ", RETURN: "\n", ESCAPE: "" };
+
+function gfxPadVisible() {
+  try {
+    return localStorage.getItem("pyide.gfxPad") !== "0";
+  } catch (_) {
+    return true;
+  }
+}
+
+function gfxPadApply() {
+  const body = $("gfx-pad-body");
+  if (!body) return;
+  body.classList.toggle("hidden", !gfxPadVisible());
+  const toggle = $("gfx-pad-toggle");
+  if (toggle) toggle.setAttribute("aria-pressed", gfxPadVisible() ? "true" : "false");
+}
+
+function gfxPadKey(name, down) {
+  const text = down ? (GFX_PAD_TEXT[name] ?? "") : "";
+  gfxSendInput({ type: "key", name, down, text });
+}
+
+const gfxPadPressed = new Set();
+
+function gfxPadPress(button, down) {
+  const name = button.dataset.gfxKey;
+  if (!name) return;
+  if (down) {
+    if (gfxPadPressed.has(name)) return;
+    gfxPadPressed.add(name);
+    button.classList.add("pressed");
+  } else {
+    if (!gfxPadPressed.has(name)) return;
+    gfxPadPressed.delete(name);
+    button.classList.remove("pressed");
+  }
+  gfxPadKey(name, down);
+}
+
+function gfxPadReleaseAll() {
+  for (const name of Array.from(gfxPadPressed)) {
+    gfxPadPressed.delete(name);
+    gfxPadKey(name, false);
+  }
+  document.querySelectorAll("#gfx-pad .pad.pressed")
+    .forEach((button) => button.classList.remove("pressed"));
+}
+
+function bindGfxPad() {
+  const pad = $("gfx-pad");
+  if (!pad) return;
+  pad.querySelectorAll("[data-gfx-key]").forEach((button) => {
+    const stop = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    button.addEventListener("pointerdown", (event) => {
+      stop(event);
+      button.setPointerCapture?.(event.pointerId);
+      gfxPadPress(button, true);
+    });
+    button.addEventListener("pointerup", (event) => { stop(event); gfxPadPress(button, false); });
+    button.addEventListener("pointercancel", () => gfxPadPress(button, false));
+    button.addEventListener("lostpointercapture", () => gfxPadPress(button, false));
+    // Un appui long ne doit rien ouvrir, et le clic ne doit pas passer au jeu.
+    button.addEventListener("contextmenu", (event) => event.preventDefault());
+    button.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); });
+  });
+  $("gfx-pad-toggle")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      localStorage.setItem("pyide.gfxPad", gfxPadVisible() ? "0" : "1");
+    } catch (_) { /* stockage indisponible : on bascule quand même */ }
+    gfxPadApply();
+  });
+  gfxPadApply();
 }
 
 function bindGfxInput() {
@@ -2115,6 +2223,7 @@ function gfxHandle(event) {
       gfx.canvas.height = gfx.height;
       gfx.images = 0;
       gfx.drawn = false;
+      gfxResetTransform();
       $("graphics-images").textContent = "";
       gfxRender();
       gfxSetStatus(`${gfx.title || "Graphique"} · ${gfx.width}×${gfx.height}`);
@@ -2159,6 +2268,7 @@ function gfxHandle(event) {
 
 function gfxClearFrame() {
   const gfx = gfxEnsure();
+  gfxResetTransform();
   // Chaque frame redessine l'écran entier : on repart du fond.
   gfx.ctx.setTransform(1, 0, 0, 1, 0, 0);
   gfx.ctx.fillStyle = gfx.background || "#000";
@@ -2168,10 +2278,26 @@ function gfxClearFrame() {
 function gfxDrawOp(op) {
   const gfx = gfxEnsure();
   const ctx = gfx.ctx;
+  // Groupes de transformation : pygame.transform.rotate / flip / scale.
+  if (op.op === "push") {
+    gfx.matrixStack.push((gfx.matrix || GFX_IDENTITY).slice());
+    return;
+  }
+  if (op.op === "pop") {
+    gfx.matrix = gfx.matrixStack.pop() || GFX_IDENTITY.slice();
+    return;
+  }
+  if (op.op === "transform") {
+    gfx.matrix = gfxMultiply(gfx.matrix || GFX_IDENTITY,
+      [Number(op.a ?? 1), Number(op.b ?? 0), Number(op.c ?? 0),
+       Number(op.d ?? 1), Number(op.e ?? 0), Number(op.f ?? 0)]);
+    return;
+  }
   const scale = gfx.canvas.width / Math.max(gfx.width, 1);
   const scaleY = gfx.canvas.height / Math.max(gfx.height, 1);
+  const matrix = gfxMultiply([scale, 0, 0, scaleY, 0, 0], gfx.matrix || GFX_IDENTITY);
   ctx.save();
-  ctx.setTransform(scale, 0, 0, scaleY, 0, 0);
+  ctx.setTransform(matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5]);
   const lineWidth = Math.max(Number(op.width) || 1, 0.5);
   switch (op.op) {
     case "clear":
@@ -3436,6 +3562,7 @@ function bindUI() {
     else toast("Déjà à la racine de cet emplacement");
   });
   bindGfxInput();
+  bindGfxPad();
 
   document.querySelectorAll(".panel-tab").forEach((button) => {
     button.addEventListener("click", () => openPanel(button.dataset.panel));

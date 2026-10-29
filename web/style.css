@@ -937,6 +937,67 @@ body.gfx-fullscreen .gfx-image { border: none; background: #000; }
 }
 .gfx-exit:active { background: rgba(255, 255, 255, .2); }
 
+/* Manette tactile : indispensable sur téléphone pour les jeux pygame. */
+#gfx-pad { position: fixed; inset: 0; z-index: 6; pointer-events: none; }
+#gfx-pad.hidden { display: none !important; }
+.gfx-pad-toggle {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  pointer-events: auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .35);
+  background: rgba(0, 0, 0, .5);
+  color: #fff;
+  font-size: 17px;
+  backdrop-filter: blur(6px);
+}
+.gfx-pad-body { position: absolute; inset: 0; pointer-events: none; }
+.gfx-pad-body.hidden { display: none !important; }
+.gfx-pad-dpad {
+  position: absolute;
+  left: 12px;
+  bottom: 14px;
+  width: 132px;
+  height: 132px;
+}
+.gfx-pad-actions {
+  position: absolute;
+  right: 14px;
+  bottom: 18px;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+#gfx-pad .pad {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  border: 1px solid rgba(255, 255, 255, .4);
+  background: rgba(20, 24, 36, .55);
+  color: #fff;
+  border-radius: 14px;
+  font-size: 18px;
+  line-height: 1;
+  width: 44px;
+  height: 44px;
+  backdrop-filter: blur(4px);
+}
+#gfx-pad .pad:active,
+#gfx-pad .pad.pressed { background: rgba(86, 182, 255, .55); }
+#gfx-pad .pad.up { left: 44px; top: 0; }
+#gfx-pad .pad.left { left: 0; top: 44px; }
+#gfx-pad .pad.down { left: 44px; top: 88px; }
+#gfx-pad .pad.right { left: 88px; top: 44px; }
+#gfx-pad-actions .pad { position: static; width: 52px; height: 52px; border-radius: 999px; font-size: 19px; }
+#gfx-pad-actions .pad.a { background: rgba(70, 190, 120, .55); }
+#gfx-pad-actions .pad.b { background: rgba(240, 180, 70, .55); }
+#gfx-pad-actions .pad.c { background: rgba(220, 80, 80, .55); }
+
 @media (min-width: 980px) {
   body.gfx-fullscreen #page-output { position: fixed; }
 }

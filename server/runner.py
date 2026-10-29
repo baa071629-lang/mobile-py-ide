@@ -242,7 +242,9 @@ class RunSession:
         elif timed_out:
             code = 124
         duration = time.monotonic() - self.started_at
-        self._cleanup_temp()
+        # Le script temporaire peut partir, mais les fichiers graphiques restent :
+        # le relais lit les dernières images juste après la sortie du programme.
+        self._cleanup_script()
         if self.proc.stdin and not self.proc.stdin.is_closing():
             try:
                 self.proc.stdin.close()
@@ -253,7 +255,23 @@ class RunSession:
             timed_out=timed_out, truncated=self.truncated,
         )
 
+    def cleanup(self) -> None:
+        """Supprime les fichiers temporaires (appelé une fois le relais fini)."""
+        self._cleanup_temp()
+
     def _cleanup_temp(self) -> None:
+        self._cleanup_script()
+        self._cleanup_gfx()
+
+    def _cleanup_script(self) -> None:
+        if self.spec.temp_file:
+            try:
+                self.spec.temp_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self.spec.temp_file = None
+
+    def _cleanup_gfx(self) -> None:
         for attr in ("gfx_file", "gfx_in"):
             path = getattr(self.spec, attr)
             if path is None:
@@ -263,12 +281,6 @@ class RunSession:
             except OSError:
                 pass
             setattr(self.spec, attr, None)
-        if self.spec.temp_file:
-            try:
-                self.spec.temp_file.unlink(missing_ok=True)
-            except OSError:
-                pass
-            self.spec.temp_file = None
 
 
 async def run_capture(code: str | None, path: str | None, stdin: str | None = None,
@@ -287,6 +299,7 @@ async def run_capture(code: str | None, path: str | None, stdin: str | None = No
         await session.send_stdin(stdin)
     await session.close_stdin()
     result = await session.wait()
+    session.cleanup()
     result.stdout = "".join(out)
     result.stderr = "".join(err)
     return result

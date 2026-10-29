@@ -7,6 +7,11 @@ from .color import css, parse
 from .rect import Rect, rect_or_none
 
 _TRANSLATED = {"rect", "circle", "ellipse", "line", "lines", "polygon", "arc", "text", "image"}
+_GROUP_MARKERS = ("push", "transform", "pop")
+
+
+def _has_group(ops) -> bool:
+    return any(op.get("op") in _GROUP_MARKERS for op in ops)
 
 
 def _translate(op: dict, dx: int, dy: int) -> dict:
@@ -99,13 +104,21 @@ class Surface:
             source_ops = [{"op": "rect", "x": 0, "y": 0, "w": getattr(source, "width", 0),
                            "h": getattr(source, "height", 0),
                            "color": css(getattr(source, "_fill", (0, 0, 0, 0))), "fill": True}]
+        if _has_group(source_ops):
+            # La source contient des matrices : on translate le groupe entier
+            # au lieu de déplacer chaque primitive (sinon les rotations cassent).
+            self._emit("push")
+            self._emit("transform", a=1.0, b=0.0, c=0.0, d=1.0, e=float(dx), f=float(dy))
+            for op in source_ops:
+                record = dict(op)
+                name = record.pop("op")
+                self._emit(name, **record)
+            self._emit("pop")
+            return Rect(dx, dy, getattr(source, "width", 0), getattr(source, "height", 0))
         for op in source_ops:
             moved = _translate(op, dx, dy)
-            if self._display:
-                name = moved.pop("op")
-                gfxserver.SERVER.op(name, **moved)
-            else:
-                self._ops.append(moved)
+            name = moved.pop("op")
+            self._emit(name, **moved)
         return Rect(dx, dy, getattr(source, "width", 0), getattr(source, "height", 0))
 
     def blits(self, sequence, doreturn: bool = True):
@@ -121,6 +134,13 @@ class Surface:
     def subsurface(self, rect):
         area = Rect(rect)
         clone = Surface((max(area.width, 0), max(area.height, 0)), self.flags)
+        if _has_group(self._ops):
+            clone._ops = ([{"op": "push"},
+                           {"op": "transform", "a": 1.0, "b": 0.0, "c": 0.0, "d": 1.0,
+                            "e": float(-area.x), "f": float(-area.y)}]
+                          + [dict(op) for op in self._ops]
+                          + [{"op": "pop"}])
+            return clone
         for op in self._ops:
             moved = _translate(op, -area.x, -area.y)
             clone._ops.append(moved)
