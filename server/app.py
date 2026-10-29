@@ -24,6 +24,8 @@ from .config import (
     AI_MODEL,
     AI_URL,
     APP_NAME,
+    IS_ANDROID,
+    PKG_BACKEND,
     HOST,
     MAX_FILE_BYTES,
     PORT,
@@ -137,6 +139,7 @@ async def api_definition(request: Request):
         try:
             path = Path(location["path"]).resolve()
             location["rel"] = files.relpath(path)
+            location["absPath"] = str(path)
             location["external"] = False
         except (ValueError, OSError):
             location["rel"] = None
@@ -248,7 +251,40 @@ async def api_search(request: Request):
 
 async def api_files(request: Request):
     query = request.query_params.get("q", "")
-    return JSONResponse({"files": files.find_files(query)})
+    directory = request.query_params.get("dir", "")
+    return JSONResponse({"files": files.find_files(query, directory)})
+
+
+async def api_places(request: Request):
+    return JSONResponse({
+        "places": files.places(),
+        "root": str(PROJECTS_ROOT),
+        "native": IS_ANDROID,
+    })
+
+
+async def api_add_place(request: Request):
+    data = await body_json(request)
+    return JSONResponse({"place": files.add_place(_text(data, "path"), _text(data, "label"))})
+
+
+async def api_remove_place(request: Request):
+    data = await body_json(request)
+    return JSONResponse({"ok": files.remove_place(_text(data, "id"))})
+
+
+async def api_import(request: Request):
+    data = await body_json(request)
+    return JSONResponse(files.import_path(
+        _text(data, "source"), _text(data, "dir"), overwrite=bool(data.get("overwrite"))
+    ))
+
+
+async def api_info(request: Request):
+    path = request.query_params.get("path")
+    if not path:
+        raise files.ApiError(400, "Chemin requis")
+    return JSONResponse(files.info(path))
 
 
 # ---------- API exécution ----------
@@ -285,6 +321,49 @@ async def api_run(request: Request):
     })
 
 
+async def _pump_gfx(path: Path | None, queue: asyncio.Queue,
+                    wait_task: asyncio.Task) -> None:
+    """Lit le fichier d'événements graphiques du programme et les relaie."""
+    if path is None:
+        return
+    offset = 0
+
+    def read_new() -> None:
+        """Transmet les lignes complètes ; une ligne en cours d'écriture attend."""
+        nonlocal offset
+        try:
+            if not path.exists():
+                return
+            with path.open("rb") as handle:
+                handle.seek(offset)
+                chunk = handle.read()
+        except OSError:
+            return
+        end = chunk.rfind(b"\n")
+        if end < 0:
+            return
+        for line in chunk[: end + 1].split(b"\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line.decode("utf-8", "replace"))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict):
+                queue.put_nowait(event)
+        offset += end + 1
+
+    while True:
+        finished = wait_task.done()
+        if not finished:
+            await asyncio.sleep(0.12)
+        read_new()
+        if finished:
+            # Dernière lecture après la fin du programme : aucune image perdue.
+            return
+
+
 async def ws_run(websocket: WebSocket):
     if TOKEN and websocket.query_params.get("token") != TOKEN:
         await websocket.close(code=4401)
@@ -309,6 +388,7 @@ async def ws_run(websocket: WebSocket):
     sender_task = asyncio.create_task(sender())
     session: runner.RunSession | None = None
     recv_task: asyncio.Task | None = None
+    gfx_task: asyncio.Task | None = None
 
     try:
         try:
@@ -345,6 +425,7 @@ async def ws_run(websocket: WebSocket):
                           "cwd": str(spec.cwd), "repl": bool(start.get("repl"))})
 
         wait_task = asyncio.create_task(session.wait())
+        gfx_task = asyncio.create_task(_pump_gfx(spec.gfx_file, queue, wait_task))
         recv_task = asyncio.create_task(websocket.receive_json())
 
         while not wait_task.done():
@@ -366,6 +447,14 @@ async def ws_run(websocket: WebSocket):
                         await session.send_stdin(data)
                 elif kind == "close_stdin":
                     await session.close_stdin()
+                elif kind == "gfx_input":
+                    payload = message.get("event")
+                    if isinstance(payload, dict) and spec.gfx_in is not None:
+                        try:
+                            with spec.gfx_in.open("a", encoding="utf-8") as handle:
+                                handle.write(json.dumps(payload) + "\n")
+                        except OSError:
+                            pass
                 elif kind == "stop":
                     queue.put_nowait({"type": "stopping"})
                     await session.stop()
@@ -375,6 +464,16 @@ async def ws_run(websocket: WebSocket):
                 break
 
         result = await wait_task
+        if gfx_task:
+            # On laisse le relais graphique finir sa dernière lecture, sinon les
+            # toutes dernières images du programme seraient perdues.
+            try:
+                await asyncio.wait_for(gfx_task, timeout=1.5)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                gfx_task.cancel()
+            except Exception:
+                pass
+            session.cleanup()
         queue.put_nowait({
             "type": "exit",
             "code": result.code,
@@ -392,8 +491,11 @@ async def ws_run(websocket: WebSocket):
     finally:
         if recv_task:
             recv_task.cancel()
+        if gfx_task:
+            gfx_task.cancel()
         if session:
             await session.stop()
+            session.cleanup()
         queue.put_nowait(None)
         try:
             await asyncio.wait_for(sender_task, timeout=2)
@@ -422,6 +524,30 @@ async def api_install_package(request: Request):
 async def api_uninstall_package(request: Request):
     data = await body_json(request)
     return JSONResponse(await packages.uninstall_package(_text(data, "name")))
+
+
+async def api_package_catalog(request: Request):
+    return JSONResponse({
+        "catalog": packages.catalog(),
+        "backend": PKG_BACKEND,
+        "graphics": packages.GRAPHICS_PACKAGES,
+    })
+
+
+async def api_package_search(request: Request):
+    query = request.query_params.get("q", "")
+    try:
+        results = await packages.search(query)
+    except files.ApiError as exc:
+        raise files.ApiError(exc.status_code, exc.detail)
+    return JSONResponse({"results": results, "query": query})
+
+
+async def api_package_info(request: Request):
+    name = request.query_params.get("name", "")
+    if not name:
+        raise files.ApiError(400, "Nom requis")
+    return JSONResponse(await packages.metadata(name))
 
 
 async def api_snippets(request: Request):
@@ -454,10 +580,14 @@ async def api_health(request: Request):
         "python": sys.version.split()[0],
         "root": str(PROJECTS_ROOT),
         "authRequired": bool(TOKEN),
+        "native": IS_ANDROID,
+        "pkgBackend": PKG_BACKEND,
+        "places": files.places(),
         "features": {
             "websocket": True,
             "format": True,
             "packages": True,
+            "graphics": True,
             "ai": bool(AI_URL or AI_MODEL),
         },
     })
@@ -495,15 +625,25 @@ app = Starlette(
         Route("/api/download", api_download),
         Route("/api/search", api_search),
         Route("/api/files", api_files),
+        Route("/api/places", api_places),
+        Route("/api/info", api_info),
+        Route("/api/places/add", api_add_place, methods=["POST"]),
+        Route("/api/places/remove", api_remove_place, methods=["POST"]),
+        Route("/api/import", api_import, methods=["POST"]),
         Route("/api/run", api_run, methods=["POST"]),
         WebSocketRoute("/ws/run", ws_run),
         Route("/api/packages", api_packages),
         Route("/api/packages/install", api_install_package, methods=["POST"]),
         Route("/api/packages/uninstall", api_uninstall_package, methods=["POST"]),
+        Route("/api/packages/catalog", api_package_catalog),
+        Route("/api/packages/search", api_package_search),
+        Route("/api/packages/info", api_package_info),
         Route("/api/snippets", api_snippets),
         Route("/api/ai/status", api_ai_status),
         Route("/api/ai", api_ai_ask, methods=["POST"]),
         Mount("/static", app=StaticFiles(directory=WEB_DIR), name="static"),
+        # Sert aussi index.html et les ressources relatives (style.css, app.js…)
+        Mount("/", app=StaticFiles(directory=WEB_DIR, html=True), name="web"),
     ],
     middleware=[Middleware(TokenMiddleware)],
     exception_handlers={files.ApiError: api_error_handler},

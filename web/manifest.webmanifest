@@ -1,50 +1,57 @@
 {
   "id": "/",
-  "name": "Mobile Py IDE",
+  "name": "Mobile Py IDE 3",
   "short_name": "Py IDE",
-  "description": "IDE Python mobile-first servi par Termux, avec terminal interactif et Monaco hors ligne.",
-  "start_url": "/",
-  "scope": "/",
+  "description": "IDE Python mobile : éditeur Monaco hors ligne, sortie séparée, entrée interactive, dossiers du téléphone, modules/paquets et écran graphique.",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui"],
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
   "orientation": "any",
   "background_color": "#1e1e2e",
   "theme_color": "#1e1e2e",
   "lang": "fr",
-  "categories": ["developer", "productivity", "utilities"],
+  "categories": [
+    "developer",
+    "productivity",
+    "utilities"
+  ],
   "icons": [
     {
-      "src": "/static/icons/icon-192.png",
+      "src": "icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/static/icons/icon-256.png",
+      "src": "icons/icon-256.png",
       "sizes": "256x256",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/static/icons/icon-384.png",
+      "src": "icons/icon-384.png",
       "sizes": "384x384",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/static/icons/icon-512.png",
+      "src": "icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/static/icons/maskable-192.png",
+      "src": "icons/maskable-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "/static/icons/maskable-512.png",
+      "src": "icons/maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

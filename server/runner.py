@@ -12,7 +12,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from .config import MAX_OUTPUT_BYTES, MAX_RUN_SECONDS, PROJECTS_ROOT
+from .config import MAX_OUTPUT_BYTES, MAX_RUN_SECONDS, PROJECTS_ROOT, USER_SITE
+
+APP_DIR = Path(__file__).resolve().parent.parent
+SHIMS_DIR = APP_DIR / "shims"
 from .files import ApiError, resolve_for_run
 
 OutputCallback = Callable[[str, str], Awaitable[None]]
@@ -24,6 +27,8 @@ class RunSpec:
     cwd: Path
     timeout: float
     temp_file: Path | None = None
+    gfx_file: Path | None = None
+    gfx_in: Path | None = None
     env: dict[str, str] = field(default_factory=dict)
 
 
@@ -82,15 +87,29 @@ def build_spec(code: str | None, path: str | None, args: list[str] | None = None
         raise ApiError(400, "Aucun code ou fichier à exécuter")
 
     env = os.environ.copy()
+    gfx_file = cwd / f".pyide-gfx-{uuid.uuid4().hex[:10]}.jsonl"
+    gfx_in = cwd / f".pyide-gfxin-{uuid.uuid4().hex[:10]}.jsonl"
+    paths = [str(APP_DIR)]
+    if USER_SITE.is_dir():
+        paths.insert(0, str(USER_SITE))
+    existing = env.get("PYTHONPATH", "")
+    if existing:
+        paths.append(existing)
     env.update({
         "PYTHONUNBUFFERED": "1",
         "PYTHONIOENCODING": "utf-8",
         "TERM": "xterm-256color",
         "MPLBACKEND": env.get("MPLBACKEND", "Agg"),
+        "PYTHONPATH": os.pathsep.join(paths),
+        "PYIDE_GFX_FILE": str(gfx_file),
+        "PYIDE_GFX_IN": str(gfx_in),
+        "PYIDE_SHIMS": str(SHIMS_DIR),
+        "PYIDE_IN_IDE": "1",
     })
     env.pop("PYTHONSTARTUP", None)
 
-    return RunSpec(cmd=cmd, cwd=cwd, timeout=timeout, temp_file=temp_file, env=env)
+    return RunSpec(cmd=cmd, cwd=cwd, timeout=timeout, temp_file=temp_file,
+                   gfx_file=gfx_file, gfx_in=gfx_in, env=env)
 
 
 class RunSession:
@@ -223,7 +242,9 @@ class RunSession:
         elif timed_out:
             code = 124
         duration = time.monotonic() - self.started_at
-        self._cleanup_temp()
+        # Le script temporaire peut partir, mais les fichiers graphiques restent :
+        # le relais lit les dernières images juste après la sortie du programme.
+        self._cleanup_script()
         if self.proc.stdin and not self.proc.stdin.is_closing():
             try:
                 self.proc.stdin.close()
@@ -234,13 +255,32 @@ class RunSession:
             timed_out=timed_out, truncated=self.truncated,
         )
 
+    def cleanup(self) -> None:
+        """Supprime les fichiers temporaires (appelé une fois le relais fini)."""
+        self._cleanup_temp()
+
     def _cleanup_temp(self) -> None:
+        self._cleanup_script()
+        self._cleanup_gfx()
+
+    def _cleanup_script(self) -> None:
         if self.spec.temp_file:
             try:
                 self.spec.temp_file.unlink(missing_ok=True)
             except OSError:
                 pass
             self.spec.temp_file = None
+
+    def _cleanup_gfx(self) -> None:
+        for attr in ("gfx_file", "gfx_in"):
+            path = getattr(self.spec, attr)
+            if path is None:
+                continue
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            setattr(self.spec, attr, None)
 
 
 async def run_capture(code: str | None, path: str | None, stdin: str | None = None,
@@ -259,6 +299,7 @@ async def run_capture(code: str | None, path: str | None, stdin: str | None = No
         await session.send_stdin(stdin)
     await session.close_stdin()
     result = await session.wait()
+    session.cleanup()
     result.stdout = "".join(out)
     result.stderr = "".join(err)
     return result

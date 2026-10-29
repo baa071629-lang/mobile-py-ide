@@ -72,6 +72,16 @@ const state = {
   repl: false,
   runId: 0,
   ws: null,
+  run: null,
+  places: [],
+  place: null,
+  page: "editor",
+  gfxFullscreen: false,
+  gfxDrawn: false,
+  lastPrompt: "",
+  stdinHistory: [],
+  stdinHistoryIndex: -1,
+  gfx: null,
   pendingStdin: [],
   panel: "terminal",
   aiText: "",
@@ -111,17 +121,16 @@ function dirname(path) {
 
 function joinPath(dir, name) {
   const clean = (name || "").replace(/^\/+/, "");
-  return dir ? `${dir}/${clean}` : clean;
+  if (!dir) return clean ? `/${clean}` : "";
+  if (!clean) return dir;
+  return `${dir.replace(/\/+$/, "")}/${clean}`;
 }
 
 function normalizePath(value, dir = state.currentDir) {
   let path = (value || "").trim().replace(/\\/g, "/");
   if (!path) return "";
-  const fromRoot = path.startsWith("/");
-  path = path.replace(/^\/+/, "");
-  if (fromRoot) return path;
-  if (dir && path !== dir && !path.startsWith(`${dir}/`)) path = joinPath(dir, path);
-  return path;
+  if (path.startsWith("/")) return path.replace(/\/+$/, "") || "/";
+  return joinPath(dir, path);
 }
 
 function formatSize(bytes) {
@@ -145,29 +154,10 @@ function fileIcon(entry) {
 /* ---------- API ---------- */
 
 async function api(path, options = {}) {
-  const headers = { ...(options.headers || {}) };
-  if (options.body && !(options.body instanceof FormData)) {
-    headers["Content-Type"] = "application/json";
-  }
-  if (state.token) headers["X-Pyide-Token"] = state.token;
-
-  let response;
   try {
-    response = await fetch(path, { cache: "no-store", ...options, headers });
-  } catch (_) {
-    throw new Error("Serveur injoignable. Le serveur Termux est-il lancé ?");
-  }
-
-  const text = await response.text();
-  let data = null;
-  if (text) {
-    try { data = JSON.parse(text); } catch (_) { data = null; }
-  }
-  if (!response.ok) {
-    const message = (data && data.detail) || `Erreur HTTP ${response.status}`;
-    const error = new Error(message);
-    error.status = response.status;
-    if (response.status === 401 && !state.authPrompted) {
+    return await PyTransport.request(path, options);
+  } catch (error) {
+    if (error.status === 401 && !state.authPrompted) {
       state.authPrompted = true;
       setTimeout(() => {
         toast("Jeton d'accès requis ou invalide", 4200);
@@ -176,7 +166,23 @@ async function api(path, options = {}) {
     }
     throw error;
   }
-  return data;
+}
+
+function placeForPath(path) {
+  let best = null;
+  for (const place of state.places) {
+    if (path === place.path || path.startsWith(`${place.path.replace(/\/+$/, "")}/`)) {
+      if (!best || place.path.length > best.path.length) best = place;
+    }
+  }
+  return best;
+}
+
+function displayPath(path) {
+  const place = placeForPath(path);
+  if (!place) return path || "";
+  const rel = path.slice(place.path.length).replace(/^\/+/, "");
+  return rel ? `${place.label}/${rel}` : place.label;
 }
 
 function tokenSuffix() {
@@ -504,8 +510,10 @@ function initMonaco() {
     $("sidebar").setAttribute("aria-hidden", "false");
   }
 
-  loadHealth();
-  loadTree("");
+  loadHealth().then(loadPlaces).then(() => {
+    const start = (state.place && state.place.path) || "";
+    loadTree(start);
+  });
   refreshAIStatus();
 }
 
@@ -524,6 +532,7 @@ function applySettings() {
   if (meta) meta.setAttribute("content", settings.theme === "light" ? "#eff1f5" : "#1e1e2e");
   $("keybar").classList.toggle("hidden", !settings.keybar);
   $("status-indent").textContent = `Espaces : ${settings.tabSize}`;
+  showPage(state.page || "editor");
 
   if (!state.monacoReady || !state.editor) return;
   monaco.editor.setTheme(settings.theme === "light" ? "pyide-light" : "pyide-dark");
@@ -966,14 +975,15 @@ function registerProviders() {
             uri: model.uri,
             range: new monaco.Range(location.line, location.column, location.line, location.column + 1),
           });
-        } else if (location.rel) {
-          if (location.rel === entry.path) {
+        } else if (location.absPath || location.path || location.rel) {
+          const targetPath = location.absPath || location.path || location.rel;
+          if (targetPath === entry.path) {
             results.push({
               uri: model.uri,
               range: new monaco.Range(location.line, location.column, location.line, location.column + 1),
             });
           } else {
-            const target = await openFile(location.rel, {
+            const target = await openFile(targetPath, {
               line: location.line,
               column: location.column,
               focus: true,
@@ -1000,7 +1010,8 @@ async function loadHealth() {
   try {
     state.health = await api("/api/health");
     const python = (state.health.python || "").split(".").slice(0, 2).join(".");
-    $("status-python").textContent = python ? `Python ${python}` : "Python";
+    const native = state.health.native || PyTransport.native;
+    $("status-python").textContent = python ? `Python ${python}${native ? " · Android" : ""}` : "Python";
     $("projects-root").textContent = state.health.root || "";
     if (state.health.authRequired && !state.token) {
       toast("Jeton d'accès requis : ouvre les paramètres ⚙", 5000);
@@ -1011,14 +1022,75 @@ async function loadHealth() {
   }
 }
 
-async function loadTree(dir = "", { silent = false } = {}) {
+async function loadPlaces() {
+  try {
+    const data = await api("/api/places");
+    state.places = data.places || [];
+  } catch (_) {
+    state.places = [];
+  }
+  const select = $("place-select");
+  select.textContent = "";
+  for (const place of state.places) {
+    select.appendChild(el("option", { value: place.path, text: place.label }));
+  }
+  const current = placeForPath(state.currentDir) || state.places[0] || null;
+  state.place = current;
+  if (current) select.value = current.path;
+  return state.places;
+}
+
+async function addPlaceDialog() {
+  if (PyTransport.native) {
+    PyTransport.requestStorage();
+    const picked = await PyTransport.pickFolder();
+    if (!picked || !picked.entries || !picked.entries.length) return;
+    const path = picked.entries[0].path;
+    try {
+      const data = await api("/api/places/add", {
+        method: "POST",
+        body: JSON.stringify({ path, label: picked.entries[0].name || path }),
+      });
+      await loadPlaces();
+      await loadTree(data.place.path);
+      toast(`Dossier ajouté : ${data.place.label}`, 2600);
+    } catch (error) {
+      toast(error.message, 3600);
+    }
+    return;
+  }
+  const value = await modalPrompt({
+    title: "Ouvrir un dossier",
+    label: "Chemin absolu du dossier",
+    value: "/",
+    placeholder: "/storage/emulated/0/MesProjets",
+    confirmLabel: "Ouvrir",
+    hint: "Sur Termux : ~/storage/shared/… donne accès au stockage du téléphone.",
+  });
+  if (!value) return;
+  try {
+    const data = await api("/api/places/add", {
+      method: "POST",
+      body: JSON.stringify({ path: value.trim() }),
+    });
+    await loadPlaces();
+    await loadTree(data.place.path);
+    toast(`Dossier ajouté : ${data.place.label}`, 2600);
+  } catch (error) {
+    toast(error.message, 3600);
+  }
+}
+
+async function loadTree(dir = null, { silent = false } = {}) {
+  if (dir === null || dir === undefined) dir = state.currentDir || (state.place && state.place.path) || "";
   let data;
   try {
     data = await api(`/api/tree?dir=${encodeURIComponent(dir || "")}&hidden=${state.settings.showHidden ? 1 : 0}`);
   } catch (error) {
-    if (dir) {
+    const fallback = (state.places[0] && state.places[0].path) || "";
+    if (dir && fallback && dir !== fallback) {
       try {
-        data = await api(`/api/tree?dir=&hidden=${state.settings.showHidden ? 1 : 0}`);
+        data = await api(`/api/tree?dir=${encodeURIComponent(fallback)}&hidden=${state.settings.showHidden ? 1 : 0}`);
       } catch (inner) {
         if (!silent) toast(`Dossier : ${inner.message}`);
         return;
@@ -1031,7 +1103,9 @@ async function loadTree(dir = "", { silent = false } = {}) {
 
   state.currentDir = data.dir || "";
   state.currentTree = data;
-  $("projects-root").textContent = data.root || "";
+  $("projects-root").textContent = data.dir || data.root || "";
+  state.place = placeForPath(state.currentDir) || state.place;
+  if (state.place && $("place-select")) $("place-select").value = state.place.path;
   renderBreadcrumb(state.currentDir);
 
   const list = $("file-list");
@@ -1051,7 +1125,7 @@ async function loadTree(dir = "", { silent = false } = {}) {
   }
 
   for (const entry of data.entries) {
-    const item = el("li", { "data-path": entry.rel },
+    const item = el("li", { "data-path": entry.path },
       el("span", { class: "dir-icon", text: fileIcon(entry) }),
       el("span", { class: "file-name", text: entry.name }),
       !entry.isDir && entry.size ? el("span", { class: "file-size", text: formatSize(entry.size) }) : null,
@@ -1061,8 +1135,8 @@ async function loadTree(dir = "", { silent = false } = {}) {
         item._pyideLongPress = false;
         return;
       }
-      if (entry.isDir) loadTree(entry.rel);
-      else openFile(entry.rel);
+      if (entry.isDir) loadTree(entry.path);
+      else openFile(entry.path);
     });
     bindLongPress(item, () => showFileActions(entry));
     list.appendChild(item);
@@ -1073,18 +1147,20 @@ async function loadTree(dir = "", { silent = false } = {}) {
 function renderBreadcrumb(dir) {
   const crumbs = $("breadcrumb");
   crumbs.textContent = "";
-  const rootLink = el("a", { href: "#", text: "racine" });
+  const place = placeForPath(dir) || state.place;
+  const root = place ? place.path : "";
+  const rootLink = el("a", { href: "#", text: place ? place.label : "racine" });
   rootLink.addEventListener("click", (event) => {
     event.preventDefault();
-    loadTree("");
+    loadTree(root);
   });
   crumbs.appendChild(rootLink);
-  if (!dir) return;
+  if (!dir || !root || dir === root) return;
 
-  const parts = dir.split("/");
-  let accumulated = "";
-  for (const part of parts) {
-    accumulated = accumulated ? `${accumulated}/${part}` : part;
+  const rel = dir.slice(root.length).replace(/^\/+/, "");
+  let accumulated = root;
+  for (const part of rel.split("/").filter(Boolean)) {
+    accumulated = joinPath(accumulated, part);
     crumbs.appendChild(el("span", { class: "sep", text: " / " }));
     const link = el("a", { href: "#", text: part });
     const target = accumulated;
@@ -1209,19 +1285,19 @@ function showFileActions(entry) {
   const actions = [];
   if (entry.isDir) {
     actions.push(
-      { icon: "📂", label: "Ouvrir le dossier", run: () => loadTree(entry.rel) },
-      { icon: "＋", label: "Nouveau fichier ici", run: () => newFileDialog(entry.rel) },
-      { icon: "🗀", label: "Nouveau dossier ici", run: () => newFolderDialog(entry.rel) },
+      { icon: "📂", label: "Ouvrir le dossier", run: () => loadTree(entry.path) },
+      { icon: "＋", label: "Nouveau fichier ici", run: () => newFileDialog(entry.path) },
+      { icon: "🗀", label: "Nouveau dossier ici", run: () => newFolderDialog(entry.path) },
       { icon: "✏️", label: "Renommer", run: () => renameEntry(entry) },
-      { icon: "📋", label: "Copier le chemin", run: () => copyText(entry.rel) },
+      { icon: "📋", label: "Copier le chemin", run: () => copyText(entry.path) },
       { icon: "🗑", label: "Supprimer", danger: true, run: () => deleteEntry(entry) },
     );
   } else {
     actions.push(
-      { icon: "📂", label: "Ouvrir", run: () => openFile(entry.rel, { focus: true }) },
+      { icon: "📂", label: "Ouvrir", run: () => openFile(entry.path, { focus: true }) },
       { icon: "✏️", label: "Renommer", run: () => renameEntry(entry) },
       { icon: "⬇", label: "Télécharger", run: () => downloadEntry(entry) },
-      { icon: "📋", label: "Copier le chemin", run: () => copyText(entry.rel) },
+      { icon: "📋", label: "Copier le chemin", run: () => copyText(entry.path) },
       { icon: "🗑", label: "Supprimer", danger: true, run: () => deleteEntry(entry) },
     );
   }
@@ -1284,21 +1360,21 @@ async function renameEntry(entry) {
   const value = await modalPrompt({
     title: "Renommer",
     label: "Nouveau chemin",
-    value: entry.rel,
+    value: entry.path,
     confirmLabel: "Renommer",
   });
-  if (!value || value === entry.rel) return;
+  if (!value || value === entry.path) return;
   try {
     const data = await api("/api/rename", {
       method: "POST",
-      body: JSON.stringify({ path: entry.rel, newPath: value }),
+      body: JSON.stringify({ path: entry.path, newPath: value }),
     });
     for (const open of state.entries.values()) {
-      if (open.path === entry.rel) {
+      if (open.path === entry.path) {
         open.path = data.path;
         open.name = basename(data.path);
-      } else if (open.path && open.path.startsWith(`${entry.rel}/`)) {
-        open.path = `${data.path}/${open.path.slice(entry.rel.length + 1)}`;
+      } else if (open.path && open.path.startsWith(`${entry.path}/`)) {
+        open.path = `${data.path}/${open.path.slice(entry.path.length + 1)}`;
       }
     }
     renderTabs();
@@ -1322,11 +1398,11 @@ async function deleteEntry(entry) {
   try {
     await api("/api/delete", {
       method: "POST",
-      body: JSON.stringify({ path: entry.rel }),
+      body: JSON.stringify({ path: entry.path }),
     });
     const toClose = [];
     for (const open of state.entries.values()) {
-      if (open.path === entry.rel || (open.path && open.path.startsWith(`${entry.rel}/`))) {
+      if (open.path === entry.path || (open.path && open.path.startsWith(`${entry.path}/`))) {
         toClose.push(open.key);
       }
     }
@@ -1340,11 +1416,42 @@ async function deleteEntry(entry) {
 
 function downloadEntry(entry) {
   const anchor = document.createElement("a");
-  anchor.href = `/api/download?path=${encodeURIComponent(entry.rel)}${state.token ? `&token=${encodeURIComponent(state.token)}` : ""}`;
+  if (PyTransport.native) {
+    toast("Téléchargement indisponible dans l'application : le fichier est déjà sur le téléphone.", 4200);
+    return;
+  }
+  anchor.href = `/api/download?path=${encodeURIComponent(entry.path || entry.rel)}${state.token ? `&token=${encodeURIComponent(state.token)}` : ""}`;
   anchor.download = entry.name;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
+}
+
+async function importFromDevice() {
+  if (!PyTransport.native) {
+    $("file-input").click();
+    return;
+  }
+  PyTransport.requestStorage();
+  const picked = await PyTransport.pickFiles();
+  if (!picked || !picked.entries || !picked.entries.length) return;
+  showLoading("Import…");
+  let count = 0;
+  try {
+    for (const file of picked.entries) {
+      await api("/api/import", {
+        method: "POST",
+        body: JSON.stringify({ source: file.path, dir: state.currentDir }),
+      });
+      count += 1;
+    }
+    await loadTree(state.currentDir, { silent: true });
+    toast(`${count} fichier(s) importé(s) ✓`);
+  } catch (error) {
+    toast(`Import impossible : ${error.message}`, 3800);
+  } finally {
+    hideLoading();
+  }
 }
 
 async function uploadFiles(files) {
@@ -1454,24 +1561,104 @@ async function saveEntry(entry, { silent = false, saveAs = false } = {}) {
 
 function termClear() {
   $("terminal-body").textContent = "";
+  state.lastPrompt = "";
 }
 
 function termAppend(text, className = "") {
   if (!text) return;
   const body = $("terminal-body");
+  const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 48;
   const span = document.createElement("span");
   if (className) span.className = className;
   span.textContent = text;
   body.appendChild(span);
-  while (body.textContent.length > 300000 && body.firstChild) {
+  while (body.textContent.length > 400000 && body.firstChild) {
     body.removeChild(body.firstChild);
   }
-  body.scrollTop = body.scrollHeight;
+  if (nearBottom) body.scrollTop = body.scrollHeight;
 }
 
 function termStatus(text) {
   $("terminal-status").textContent = text;
 }
+
+/* ---------- pages : éditeur OU sortie, jamais tassés ensemble ---------- */
+
+function showPage(page) {
+  const target = page === "output" ? "output" : "editor";
+  state.page = target;
+  $("page-editor").classList.toggle("hidden", target !== "editor");
+  $("page-output").classList.toggle("hidden", target !== "output");
+  document.querySelectorAll("#page-switch button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.page === target);
+  });
+  if (target === "output") {
+    $("output-dot").classList.add("hidden");
+    if (state.panel === "graphics") gfxRender();
+  }
+  if (state.monacoReady && state.editor) {
+    setTimeout(() => state.editor.layout(), 20);
+  }
+}
+
+function selectOutputTab(tab) {
+  state.panel = tab;
+  document.querySelectorAll(".panel-tab").forEach((button) => {
+    button.classList.toggle("active", button.dataset.panel === tab);
+  });
+  $("terminal-view").classList.toggle("hidden", tab !== "terminal");
+  $("graphics-view").classList.toggle("hidden", tab !== "graphics");
+  $("problems-view").classList.toggle("hidden", tab !== "problems");
+  if (tab === "graphics") gfxRender();
+  if (tab === "terminal" && state.running) setTimeout(() => $("stdin-input").focus(), 60);
+}
+
+/* Ouvre la page de sortie sur un onglet donné. */
+function openPanel(tab = "terminal") {
+  showPage("output");
+  selectOutputTab(tab);
+}
+
+/* Revient à l'éditeur. */
+function closePanel() {
+  showPage("editor");
+}
+
+function togglePanel() {
+  showPage(state.page === "output" ? "editor" : "output");
+}
+
+/* Signale discrètement qu'il se passe quelque chose dans la sortie. */
+function markOutput() {
+  if (state.page !== "output") $("output-dot").classList.remove("hidden");
+}
+
+/* ---------- exécution / terminal ---------- */
+
+function termClear() {
+  $("terminal-body").textContent = "";
+  state.lastPrompt = "";
+}
+
+function termAppend(text, className = "") {
+  if (!text) return;
+  const body = $("terminal-body");
+  const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 48;
+  const span = document.createElement("span");
+  if (className) span.className = className;
+  span.textContent = text;
+  body.appendChild(span);
+  while (body.textContent.length > 400000 && body.firstChild) {
+    body.removeChild(body.firstChild);
+  }
+  if (nearBottom) body.scrollTop = body.scrollHeight;
+}
+
+function termStatus(text) {
+  $("terminal-status").textContent = text;
+}
+
+/* ---------- exécution / terminal ---------- */
 
 function setRunning(running, { repl = false } = {}) {
   state.running = running;
@@ -1479,38 +1666,45 @@ function setRunning(running, { repl = false } = {}) {
   const button = $("btn-run");
   button.classList.toggle("busy", running);
   button.textContent = running ? "■" : "▶";
-  button.title = running ? "Arrêter l'exécution" : "Exécuter (Ctrl+Entrée)";
+  button.title = running ? "Arrêter (Ctrl+C)" : "Exécuter (Ctrl+Entrée)";
   button.setAttribute("aria-label", running ? "Arrêter" : "Exécuter");
   $("stdin-form").classList.toggle("hidden", !running);
+  $("btn-panel-stop").classList.toggle("hidden", !running);
   if (running) {
-    // Le formulaire est disponible tout de suite, mais l'envoi est mis en
-    // attente tant que la WebSocket n'est pas ouverte (voir sendStdin).
-    setTimeout(() => $("stdin-input").focus(), 80);
+    $("stdin-prompt").textContent = repl ? ">>>" : "›";
+    setTimeout(() => { if (state.running) $("stdin-input").focus(); }, 60);
   } else {
     state.pendingStdin = [];
+    state.stdinHistoryIndex = -1;
     $("stdin-input").blur();
+    $("stdin-input").value = "";
   }
 }
 
 function flushStdin() {
-  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-  for (const data of state.pendingStdin.splice(0)) {
-    state.ws.send(JSON.stringify({ type: "stdin", data }));
+  if (!state.run) return;
+  for (const data of state.pendingStdin.splice(0)) state.run.input(data);
+}
+
+/* L'invite affichée par le programme (« Votre nom ? ») devient l'invite du
+ * champ de saisie : on se comporte comme le terminal intégré de PyramIDE. */
+function trackPrompt(text) {
+  if (!text) return;
+  const lastLine = text.split("\n").pop();
+  if (text.endsWith("\n")) {
+    state.lastPrompt = "";
+  } else if (lastLine !== undefined) {
+    state.lastPrompt = lastLine.slice(-120);
   }
 }
 
-function openPanel(tab = "terminal") {
-  $("panel").classList.remove("hidden");
-  state.panel = tab;
-  document.querySelectorAll(".panel-tab").forEach((button) => {
-    button.classList.toggle("active", button.dataset.panel === tab);
-  });
-  $("terminal-view").classList.toggle("hidden", tab !== "terminal");
-  $("problems-view").classList.toggle("hidden", tab !== "problems");
-}
-
-function closePanel() {
-  $("panel").classList.add("hidden");
+function showStdinPrompt() {
+  const prompt = (state.lastPrompt || "").trim() || (state.repl ? ">>>" : "›");
+  $("stdin-prompt").textContent = prompt;
+  const input = $("stdin-input");
+  input.placeholder = state.repl ? "Expression Python…" : "Réponse attendue par le programme…";
+  if (!state.running) return;
+  setTimeout(() => { if (state.running) input.focus(); }, 30);
 }
 
 function runActive() {
@@ -1541,10 +1735,7 @@ function runSelection() {
     toast("Sélectionne d'abord du code à exécuter");
     return;
   }
-  runPayload(
-    { code, path: entry.path || null },
-    { label: "sélection" },
-  );
+  runPayload({ code, path: entry.path || null }, { label: "sélection" });
 }
 
 async function runWithArgs() {
@@ -1564,7 +1755,6 @@ async function runWithArgs() {
   const payload = {};
   if (entry.path) payload.path = entry.path;
   if (!entry.path || entry.dirty) payload.code = entry.model.getValue();
-  payload.args = args;
   runPayload(payload, { label: entry.path || entry.name, args });
 }
 
@@ -1605,178 +1795,652 @@ function startConsole() {
 
 function runPayload(payload, { repl = false, label = "Python", args = [] } = {}) {
   if (state.running) stopRun();
+  if (state.run) {
+    try { state.run.dispose(); } catch (_) { /* ignoré */ }
+    state.run = null;
+  }
   state.runId += 1;
   const runId = state.runId;
   state.pendingStdin = [];
+  state.lastPrompt = "";
+  state.stdinHistoryIndex = -1;
   const runArgs = Array.isArray(args) ? args : [];
 
   openPanel("terminal");
   termClear();
-  const argText = runArgs.length ? ` ${runArgs.map((arg) => (/\s/.test(arg) ? JSON.stringify(arg) : arg)).join(" ")}` : "";
+  const argText = runArgs.length
+    ? ` ${runArgs.map((arg) => (/\s/.test(arg) ? JSON.stringify(arg) : arg)).join(" ")}`
+    : "";
   termAppend(repl ? "$ python -i\n" : `$ python ${label}${argText}\n`, "system");
   termStatus(repl ? "Console Python — en cours" : `Exécution — ${label}`);
   $("terminal-cwd").textContent = "";
   setRunning(true, { repl });
 
-  if (state.ws) {
-    try { state.ws.close(); } catch (_) { /* ignore */ }
-    state.ws = null;
-  }
-
-  let opened = false;
-  let fallbackStarted = false;
-  const protocol = location.protocol === "https:" ? "wss" : "ws";
-  const url = `${protocol}://${location.host}/ws/run${state.token ? `?token=${encodeURIComponent(state.token)}` : ""}`;
-
-  let socket;
-  try {
-    socket = new WebSocket(url);
-  } catch (_) {
-    runFallback(payload, runId, repl);
-    return;
-  }
-  state.ws = socket;
-
-  socket.addEventListener("open", () => {
-    if (state.runId !== runId) return;
-    opened = true;
-    const message = {
-      type: "start",
-      path: payload.path || null,
-      args: runArgs,
-      timeout: state.settings.runTimeout,
-      repl,
-    };
-    if (payload.code !== undefined) message.code = payload.code;
-    socket.send(JSON.stringify(message));
-    flushStdin();
+  const controller = PyTransport.run({
+    code: payload.code,
+    path: payload.path || null,
+    args: runArgs,
+    repl,
+    timeout: state.settings.runTimeout,
+  }, {
+    onEvent: (event) => handleRunEvent(event, { runId, repl, label }),
   });
+  state.run = controller;
+  flushStdin();
+}
 
-  socket.addEventListener("message", (event) => {
-    if (state.runId !== runId) return;
-    let message;
-    try { message = JSON.parse(event.data); } catch (_) { return; }
-    if (message.type === "started") {
-      $("terminal-cwd").textContent = message.cwd || "";
-      termStatus(repl ? "Console Python — en cours" : "Exécution en cours…");
+function handleRunEvent(event, ctx) {
+  if (state.runId !== ctx.runId) return;
+  const { repl } = ctx;
+  switch (event.type) {
+    case "started":
+      if (event.cwd) $("terminal-cwd").textContent = event.cwd;
+      if (event.repl) termStatus("Console Python — en cours");
       flushStdin();
-    } else if (message.type === "stdout") {
-      termAppend(message.data || "");
-    } else if (message.type === "stderr") {
-      if (repl) {
-        // Le REPL Python écrit ses invites « >>> » sur stderr : on les masque
-        // puisque l'on affiche déjà la ligne envoyée par l'utilisateur.
-        const cleaned = (message.data || "").replace(/(^|\n)(>>> |\.\.\. )/g, "$1");
-        if (cleaned) termAppend(cleaned, "stderr");
-      } else {
-        termAppend(message.data || "", "stderr");
-      }
-    } else if (message.type === "stopping") {
+      break;
+    case "stdout":
+      termAppend(event.data || "");
+      trackPrompt(event.data || "");
+      markOutput();
+      break;
+    case "stderr": {
+      let text = event.data || "";
+      if (repl) text = text.replace(/(^|\n)(>>> |\.\.\. )/g, "$1");
+      if (text) termAppend(text, "stderr");
+      break;
+    }
+    case "input_echo":
+      // L'interface écho déjà la ligne au moment de l'envoi : on évite un doublon.
+      state.lastPrompt = "";
+      break;
+    case "need_input":
+      showStdinPrompt();
+      break;
+    case "gfx":
+      gfxHandle(event);
+      break;
+    case "image":
+      gfxShowImage(event);
+      break;
+    case "stdin_unavailable":
+      termAppend("\nL'entrée standard interactive nécessite la WebSocket "
+        + "(mode HTTP de secours) : le programme ne peut pas lire input().\n", "stderr");
+      $("stdin-form").classList.add("hidden");
+      break;
+    case "stopping":
       termStatus("Arrêt demandé…");
-    } else if (message.type === "exit") {
-      const duration = (message.duration || 0).toFixed(2);
-      const exitText = message.timedOut
+      break;
+    case "exit": {
+      const duration = (event.duration || 0).toFixed(2);
+      const exitText = event.timedOut
         ? `\n— délai dépassé après ${duration} s —\n`
-        : `\n— code de sortie ${message.code} · ${duration} s —\n`;
-      termAppend(exitText, message.code === 0 ? "exit success" : "exit");
-      if (message.truncated) termAppend("Sortie tronquée par le serveur.\n", "stderr");
-      termStatus(message.timedOut ? "Délai dépassé" : `Terminé (code ${message.code})`);
+        : `\n— code de sortie ${event.code} · ${duration} s —\n`;
+      termAppend(exitText, event.code === 0 ? "exit success" : "exit");
+      if (event.truncated) termAppend("Sortie tronquée par le serveur.\n", "stderr");
+      termStatus(event.timedOut ? "Délai dépassé" : `Terminé (code ${event.code})`);
       setRunning(false);
-    } else if (message.type === "error") {
-      termAppend(`\nErreur : ${message.message}\n`, "stderr");
-      termStatus("Erreur");
-      setRunning(false);
+      $("btn-panel-stop").classList.add("hidden");
+      break;
     }
-  });
-
-  socket.addEventListener("error", () => {
-    if (state.runId !== runId || opened) return;
-    if (!fallbackStarted) {
-      fallbackStarted = true;
-      runFallback(payload, runId, repl);
-    }
-  });
-
-  socket.addEventListener("close", () => {
-    if (state.runId !== runId) return;
-    state.ws = null;
-    if (!opened) {
-      if (!fallbackStarted) {
-        fallbackStarted = true;
-        runFallback(payload, runId, repl);
-      }
-      return;
-    }
-    if (state.running) {
+    case "disconnected":
       termAppend("\n— connexion terminée —\n", "exit");
       termStatus("Terminé");
       setRunning(false);
-    }
-  });
-}
-
-async function runFallback(payload, runId, repl) {
-  if (state.pendingStdin.length) {
-    state.pendingStdin = [];
-    termAppend("\nL'entrée standard n'est pas disponible en mode secours (HTTP).\n", "stderr");
-  }
-  $("stdin-form").classList.add("hidden");
-  try {
-    const data = await api("/api/run", {
-      method: "POST",
-      body: JSON.stringify({
-        path: payload.path || null,
-        code: payload.code !== undefined ? payload.code : null,
-        args: payload.args || [],
-        timeout: state.settings.runTimeout,
-        repl,
-      }),
-    });
-    if (state.runId !== runId) return;
-    if (data.stdout) termAppend(data.stdout);
-    if (data.stderr) termAppend(data.stderr, "stderr");
-    if (!data.stdout && !data.stderr) termAppend("(aucune sortie)\n");
-    termAppend(
-      data.timedOut
-        ? `\n— délai dépassé —\n`
-        : `\n— code de sortie ${data.code} · ${(data.duration || 0).toFixed(2)} s —\n`,
-      data.code === 0 ? "exit success" : "exit",
-    );
-    termStatus(data.timedOut ? "Délai dépassé" : `Terminé (code ${data.code})`);
-  } catch (error) {
-    if (state.runId !== runId) return;
-    termAppend(`\nErreur : ${error.message}\n`, "stderr");
-    termStatus("Erreur");
-  } finally {
-    if (state.runId === runId) setRunning(false);
+      break;
+    case "error":
+      termAppend(`\nErreur : ${event.message}\n`, "stderr");
+      termStatus("Erreur");
+      setRunning(false);
+      break;
+    default:
+      break;
   }
 }
 
 function stopRun() {
   if (!state.running) return;
   termStatus("Arrêt demandé…");
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify({ type: "stop" }));
-  } else {
-    setRunning(false);
-  }
+  if (state.run && typeof state.run.stop === "function") state.run.stop();
+  else setRunning(false);
+  setTimeout(() => { if (state.running) setRunning(false); }, 2500);
 }
 
 function sendStdin(event) {
-  event.preventDefault();
+  if (event) event.preventDefault();
   if (!state.running) return;
   const input = $("stdin-input");
   const value = input.value;
   input.value = "";
-  termAppend(state.repl ? `>>> ${value}\n` : `${value}\n`, "stdin-echo");
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify({ type: "stdin", data: `${value}\n` }));
-  } else {
-    // L'utilisateur a validé avant la fin de la connexion : on garde la ligne
-    // et on l'enverra dès que la WebSocket sera ouverte.
-    state.pendingStdin.push(`${value}\n`);
+  if (value.trim()) {
+    state.stdinHistory.push(value);
+    if (state.stdinHistory.length > 100) state.stdinHistory.shift();
   }
+  state.stdinHistoryIndex = -1;
+  termAppend(`${value}\n`, "stdin-echo");
+  state.lastPrompt = "";
+  if (state.run) state.run.input(`${value}\n`);
+  else state.pendingStdin.push(`${value}\n`);
   input.focus();
+}
+
+function sendEof() {
+  if (!state.running) return;
+  termAppend("^D\n", "stdin-echo");
+  if (state.run) state.run.closeInput();
+  $("stdin-input").focus();
+}
+
+function stdinHistory(event) {
+  if (!state.stdinHistory.length) return;
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    state.stdinHistoryIndex = state.stdinHistoryIndex < 0
+      ? state.stdinHistory.length - 1
+      : Math.max(0, state.stdinHistoryIndex - 1);
+    $("stdin-input").value = state.stdinHistory[state.stdinHistoryIndex];
+  } else if (event.key === "ArrowDown") {
+    event.preventDefault();
+    if (state.stdinHistoryIndex < 0) return;
+    state.stdinHistoryIndex += 1;
+    if (state.stdinHistoryIndex >= state.stdinHistory.length) {
+      state.stdinHistoryIndex = -1;
+      $("stdin-input").value = "";
+    } else {
+      $("stdin-input").value = state.stdinHistory[state.stdinHistoryIndex];
+    }
+  }
+}
+
+/* ---------- écran graphique (pygame, tkinter, pyide_gui) ---------- */
+
+function gfxEnsure() {
+  if (state.gfx) return state.gfx;
+  const canvas = $("graphics-canvas");
+  const ctx = canvas.getContext("2d");
+  state.gfx = {
+    canvas, ctx, width: 640, height: 400, background: "#101018",
+    images: 0, drawn: false, fullscreen: false, title: "",
+    matrix: [1, 0, 0, 1, 0, 0], matrixStack: [],
+  };
+  return state.gfx;
+}
+
+const GFX_IDENTITY = [1, 0, 0, 1, 0, 0];
+
+// Composition de deux matrices affines [a, b, c, d, e, f] (m1 puis m2).
+function gfxMultiply(m1, m2) {
+  return [
+    m1[0] * m2[0] + m1[2] * m2[1],
+    m1[1] * m2[0] + m1[3] * m2[1],
+    m1[0] * m2[2] + m1[2] * m2[3],
+    m1[1] * m2[2] + m1[3] * m2[3],
+    m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+    m1[1] * m2[4] + m1[3] * m2[5] + m1[5],
+  ];
+}
+
+function gfxResetTransform() {
+  const gfx = gfxEnsure();
+  gfx.matrix = GFX_IDENTITY.slice();
+  gfx.matrixStack = [];
+}
+
+function gfxReset() {
+  const gfx = gfxEnsure();
+  gfx.width = 640;
+  gfx.height = 400;
+  gfx.background = "#101018";
+  gfx.canvas.width = gfx.width;
+  gfx.canvas.height = gfx.height;
+  gfx.images = 0;
+  gfx.drawn = false;
+  gfxResetTransform();
+  $("graphics-images").textContent = "";
+  $("graphics-status").textContent = "Aucun affichage";
+  gfxExitFullscreen(false);
+  gfxRender();
+}
+
+function gfxSetStatus(text) {
+  $("graphics-status").textContent = text;
+}
+
+/* ---------- plein écran ---------- */
+
+function gfxEnterFullscreen(notifyBridge = true) {
+  const gfx = gfxEnsure();
+  if (!gfx.drawn && gfx.images === 0 && !gfx.fullscreen) {
+    gfxSetStatus("Lance un programme graphique (pygame, tkinter, pyide_gui)");
+  }
+  state.gfxFullscreen = true;
+  document.body.classList.add("gfx-fullscreen");
+  $("btn-gfx-exit").classList.remove("hidden");
+  $("gfx-pad").classList.remove("hidden");
+  gfxPadApply();
+  showPage("output");
+  selectOutputTab("graphics");
+  if (notifyBridge) PyTransport.setImmersive(true, true);
+  setTimeout(() => {
+    gfx.canvas.width = gfx.width;
+    gfx.canvas.height = gfx.height;
+    gfxRender();
+  }, 30);
+}
+
+function gfxExitFullscreen(notifyProgram = false) {
+  if (!state.gfxFullscreen && !document.body.classList.contains("gfx-fullscreen")) return;
+  state.gfxFullscreen = false;
+  document.body.classList.remove("gfx-fullscreen");
+  $("btn-gfx-exit").classList.add("hidden");
+  $("gfx-pad").classList.add("hidden");
+  if (typeof gfxPadReleaseAll === "function") gfxPadReleaseAll();
+  PyTransport.setImmersive(false, false);
+  if (notifyProgram) gfxSendInput({ type: "quit" });
+  setTimeout(() => {
+    const gfx = gfxEnsure();
+    gfx.canvas.width = gfx.width;
+    gfx.canvas.height = gfx.height;
+    gfxRender();
+  }, 30);
+}
+
+/* ---------- entrées tactiles et clavier ---------- */
+
+function gfxSendInput(event) {
+  if (!state.run || typeof state.run.gfx !== "function") return false;
+  state.run.gfx(event);
+  return true;
+}
+
+function gfxLogicalPoint(clientX, clientY) {
+  const gfx = gfxEnsure();
+  const rect = gfx.canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return [0, 0];
+  // Le canevas peut être « contenu » (object-fit) : on tient compte des bandes.
+  const ratio = Math.min(rect.width / gfx.width, rect.height / gfx.height);
+  const drawnW = gfx.width * ratio;
+  const drawnH = gfx.height * ratio;
+  const offsetX = rect.left + (rect.width - drawnW) / 2;
+  const offsetY = rect.top + (rect.height - drawnH) / 2;
+  const x = (clientX - offsetX) / ratio;
+  const y = (clientY - offsetY) / ratio;
+  return [Math.round(clamp(x, 0, gfx.width)), Math.round(clamp(y, 0, gfx.height))];
+}
+
+const GFX_KEY_NAMES = {
+  ArrowLeft: "LEFT", ArrowRight: "RIGHT", ArrowUp: "UP", ArrowDown: "DOWN",
+  Escape: "ESCAPE", Enter: "RETURN", " ": "SPACE", Backspace: "BACKSPACE",
+  Tab: "TAB", Shift: "LSHIFT", Control: "LCTRL", Alt: "LALT", Delete: "DELETE",
+};
+
+function gfxKeyEvent(event, down) {
+  const raw = GFX_KEY_NAMES[event.key] || (event.key.length === 1 ? event.key.toUpperCase() : event.key);
+  const payload = { type: "key", name: raw, down, text: down ? event.key : "" };
+  if (event.key.length === 1) payload.code = event.key.charCodeAt(0);
+  gfxSendInput(payload);
+}
+
+/* ---------- manette tactile (plein écran) ---------- */
+
+const GFX_PAD_TEXT = { SPACE: " ", RETURN: "\n", ESCAPE: "" };
+
+function gfxPadVisible() {
+  try {
+    return localStorage.getItem("pyide.gfxPad") !== "0";
+  } catch (_) {
+    return true;
+  }
+}
+
+function gfxPadApply() {
+  const body = $("gfx-pad-body");
+  if (!body) return;
+  body.classList.toggle("hidden", !gfxPadVisible());
+  const toggle = $("gfx-pad-toggle");
+  if (toggle) toggle.setAttribute("aria-pressed", gfxPadVisible() ? "true" : "false");
+}
+
+function gfxPadKey(name, down) {
+  const text = down ? (GFX_PAD_TEXT[name] ?? "") : "";
+  gfxSendInput({ type: "key", name, down, text });
+}
+
+const gfxPadPressed = new Set();
+
+function gfxPadPress(button, down) {
+  const name = button.dataset.gfxKey;
+  if (!name) return;
+  if (down) {
+    if (gfxPadPressed.has(name)) return;
+    gfxPadPressed.add(name);
+    button.classList.add("pressed");
+  } else {
+    if (!gfxPadPressed.has(name)) return;
+    gfxPadPressed.delete(name);
+    button.classList.remove("pressed");
+  }
+  gfxPadKey(name, down);
+}
+
+function gfxPadReleaseAll() {
+  for (const name of Array.from(gfxPadPressed)) {
+    gfxPadPressed.delete(name);
+    gfxPadKey(name, false);
+  }
+  document.querySelectorAll("#gfx-pad .pad.pressed")
+    .forEach((button) => button.classList.remove("pressed"));
+}
+
+function bindGfxPad() {
+  const pad = $("gfx-pad");
+  if (!pad) return;
+  pad.querySelectorAll("[data-gfx-key]").forEach((button) => {
+    const stop = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    button.addEventListener("pointerdown", (event) => {
+      stop(event);
+      button.setPointerCapture?.(event.pointerId);
+      gfxPadPress(button, true);
+    });
+    button.addEventListener("pointerup", (event) => { stop(event); gfxPadPress(button, false); });
+    button.addEventListener("pointercancel", () => gfxPadPress(button, false));
+    button.addEventListener("lostpointercapture", () => gfxPadPress(button, false));
+    // Un appui long ne doit rien ouvrir, et le clic ne doit pas passer au jeu.
+    button.addEventListener("contextmenu", (event) => event.preventDefault());
+    button.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); });
+  });
+  $("gfx-pad-toggle")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      localStorage.setItem("pyide.gfxPad", gfxPadVisible() ? "0" : "1");
+    } catch (_) { /* stockage indisponible : on bascule quand même */ }
+    gfxPadApply();
+  });
+  gfxPadApply();
+}
+
+function bindGfxInput() {
+  const canvas = $("graphics-canvas");
+  const stage = $("graphics-stage");
+  let pointerDown = false;
+
+  const send = (event, action) => {
+    const [x, y] = gfxLogicalPoint(event.clientX, event.clientY);
+    gfxSendInput({ type: "mouse", action, x, y, button: 1, buttons: [action !== "up", false, false] });
+  };
+
+  stage.addEventListener("pointerdown", (event) => {
+    if (!document.body.classList.contains("gfx-fullscreen")) return;
+    pointerDown = true;
+    stage.setPointerCapture?.(event.pointerId);
+    send(event, "down");
+    event.preventDefault();
+  });
+  stage.addEventListener("pointermove", (event) => {
+    if (!pointerDown) return;
+    send(event, "move");
+  });
+  const release = (event) => {
+    if (!pointerDown) return;
+    pointerDown = false;
+    send(event, "up");
+  };
+  stage.addEventListener("pointerup", release);
+  stage.addEventListener("pointercancel", release);
+  stage.addEventListener("contextmenu", (event) => event.preventDefault());
+
+  window.addEventListener("keydown", (event) => {
+    if (!document.body.classList.contains("gfx-fullscreen")) return;
+    if (event.key === "Escape") {
+      gfxExitFullscreen(true);
+      event.preventDefault();
+      return;
+    }
+    gfxKeyEvent(event, true);
+    event.preventDefault();
+  });
+  window.addEventListener("keyup", (event) => {
+    if (!document.body.classList.contains("gfx-fullscreen")) return;
+    gfxKeyEvent(event, false);
+  });
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+}
+
+/* ---------- rendu ---------- */
+
+function gfxHandle(event) {
+  const gfx = gfxEnsure();
+  switch (event.op) {
+    case "open":
+      gfx.width = Math.max(Number(event.width) || 640, 1);
+      gfx.height = Math.max(Number(event.height) || 400, 1);
+      gfx.background = event.background || "#101018";
+      gfx.title = event.title || "";
+      gfx.canvas.width = gfx.width;
+      gfx.canvas.height = gfx.height;
+      gfx.images = 0;
+      gfx.drawn = false;
+      gfxResetTransform();
+      $("graphics-images").textContent = "";
+      gfxRender();
+      gfxSetStatus(`${gfx.title || "Graphique"} · ${gfx.width}×${gfx.height}`);
+      markOutput();
+      // pygame/tkinter plein écran : on bascule tout de suite l'affichage.
+      if (event.fullscreen) gfxEnterFullscreen(true);
+      else if (state.page === "output") selectOutputTab("graphics");
+      break;
+    case "frame":
+      gfxClearFrame();
+      for (const op of event.ops || []) gfxDrawOp(op);
+      gfx.drawn = true;
+      markOutput();
+      break;
+    case "present":
+      // Rien à faire : les opérations ont déjà été peintes.
+      break;
+    case "clear":
+      gfx.background = event.color || gfx.background;
+      gfxRender();
+      break;
+    case "title":
+      gfx.title = event.title || "";
+      gfxSetStatus(`${gfx.title} · ${gfx.width}×${gfx.height}`);
+      break;
+    case "fullscreen":
+      if (event.value) gfxEnterFullscreen(true);
+      else gfxExitFullscreen(false);
+      break;
+    case "close":
+      gfx.drawn = false;
+      gfxExitFullscreen(false);
+      gfxSetStatus("Programme terminé");
+      break;
+    default:
+      gfx.drawn = true;
+      gfxDrawOp(event);
+      break;
+  }
+  $("graphics-empty").classList.add("hidden");
+}
+
+function gfxClearFrame() {
+  const gfx = gfxEnsure();
+  gfxResetTransform();
+  // Chaque frame redessine l'écran entier : on repart du fond.
+  gfx.ctx.setTransform(1, 0, 0, 1, 0, 0);
+  gfx.ctx.fillStyle = gfx.background || "#000";
+  gfx.ctx.fillRect(0, 0, gfx.canvas.width, gfx.canvas.height);
+}
+
+function gfxDrawOp(op) {
+  const gfx = gfxEnsure();
+  const ctx = gfx.ctx;
+  // Groupes de transformation : pygame.transform.rotate / flip / scale.
+  if (op.op === "push") {
+    gfx.matrixStack.push((gfx.matrix || GFX_IDENTITY).slice());
+    return;
+  }
+  if (op.op === "pop") {
+    gfx.matrix = gfx.matrixStack.pop() || GFX_IDENTITY.slice();
+    return;
+  }
+  if (op.op === "transform") {
+    gfx.matrix = gfxMultiply(gfx.matrix || GFX_IDENTITY,
+      [Number(op.a ?? 1), Number(op.b ?? 0), Number(op.c ?? 0),
+       Number(op.d ?? 1), Number(op.e ?? 0), Number(op.f ?? 0)]);
+    return;
+  }
+  const scale = gfx.canvas.width / Math.max(gfx.width, 1);
+  const scaleY = gfx.canvas.height / Math.max(gfx.height, 1);
+  const matrix = gfxMultiply([scale, 0, 0, scaleY, 0, 0], gfx.matrix || GFX_IDENTITY);
+  ctx.save();
+  ctx.setTransform(matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5]);
+  const lineWidth = Math.max(Number(op.width) || 1, 0.5);
+  switch (op.op) {
+    case "clear":
+      gfx.background = op.color || "#000";
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = gfx.background;
+      ctx.fillRect(0, 0, gfx.canvas.width, gfx.canvas.height);
+      break;
+    case "rect":
+      ctx.beginPath();
+      ctx.rect(op.x, op.y, op.w, op.h);
+      if (op.fill) { ctx.fillStyle = op.color || "#fff"; ctx.fill(); }
+      else { ctx.lineWidth = lineWidth; ctx.strokeStyle = op.color || "#fff"; ctx.stroke(); }
+      break;
+    case "circle":
+      ctx.beginPath();
+      ctx.arc(op.x, op.y, Math.max(op.r, 0), 0, Math.PI * 2);
+      if (op.fill) { ctx.fillStyle = op.color || "#fff"; ctx.fill(); }
+      else { ctx.lineWidth = lineWidth; ctx.strokeStyle = op.color || "#fff"; ctx.stroke(); }
+      break;
+    case "ellipse":
+      ctx.beginPath();
+      ctx.ellipse(op.x + op.w / 2, op.y + op.h / 2,
+        Math.abs(op.w / 2), Math.abs(op.h / 2), 0, 0, Math.PI * 2);
+      if (op.fill) { ctx.fillStyle = op.color || "#fff"; ctx.fill(); }
+      else { ctx.lineWidth = lineWidth; ctx.strokeStyle = op.color || "#fff"; ctx.stroke(); }
+      break;
+    case "arc": {
+      ctx.beginPath();
+      const start = (-Number(op.start || 0)) * Math.PI / 180;
+      const stop = (-Number(op.stop || 0)) * Math.PI / 180;
+      ctx.ellipse(op.x + op.w / 2, op.y + op.h / 2, Math.abs(op.w / 2),
+        Math.abs(op.h / 2), 0, start, stop);
+      ctx.lineWidth = lineWidth;
+      ctx.strokeStyle = op.color || "#fff";
+      ctx.stroke();
+      break;
+    }
+    case "line":
+      ctx.beginPath();
+      ctx.moveTo(op.x1, op.y1);
+      ctx.lineTo(op.x2, op.y2);
+      ctx.lineWidth = lineWidth;
+      ctx.strokeStyle = op.color || "#fff";
+      ctx.stroke();
+      break;
+    case "lines": {
+      const points = op.points || [];
+      if (points.length < 2) break;
+      ctx.beginPath();
+      ctx.moveTo(points[0][0], points[0][1]);
+      for (const [x, y] of points.slice(1)) ctx.lineTo(x, y);
+      if (op.closed) ctx.closePath();
+      ctx.lineWidth = lineWidth;
+      ctx.strokeStyle = op.color || "#fff";
+      ctx.stroke();
+      break;
+    }
+    case "polygon": {
+      const points = op.points || [];
+      if (points.length < 2) break;
+      ctx.beginPath();
+      ctx.moveTo(points[0][0], points[0][1]);
+      for (const [x, y] of points.slice(1)) ctx.lineTo(x, y);
+      ctx.closePath();
+      if (op.fill) { ctx.fillStyle = op.color || "#fff"; ctx.fill(); }
+      else { ctx.lineWidth = lineWidth; ctx.strokeStyle = op.color || "#fff"; ctx.stroke(); }
+      break;
+    }
+    case "text": {
+      const size = Number(op.size) || 14;
+      ctx.fillStyle = op.color || "#fff";
+      ctx.font = `${op.bold ? "bold " : ""}${op.italic ? "italic " : ""}${size}px ` +
+        (op.font || "ui-monospace, monospace");
+      ctx.textBaseline = "top";
+      ctx.textAlign = op.align === "center" ? "center" : "left";
+      const lines = String(op.value ?? "").split("\n");
+      lines.forEach((line, index) => {
+        ctx.fillText(line, op.x, op.y + index * size * 1.35);
+      });
+      break;
+    }
+    case "pixel":
+      ctx.fillStyle = op.color || "#fff";
+      ctx.fillRect(op.x, op.y, 1, 1);
+      break;
+    case "image":
+      gfxBlit(op);
+      break;
+    default:
+      break;
+  }
+  ctx.restore();
+}
+
+function gfxBlit(op) {
+  const gfx = gfxEnsure();
+  const source = String(op.data || "");
+  const image = new Image();
+  image.onload = () => {
+    const scale = gfx.canvas.width / Math.max(gfx.width, 1);
+    const scaleY = gfx.canvas.height / Math.max(gfx.height, 1);
+    const width = (op.w || image.width) * scale;
+    const height = (op.h || image.height) * scaleY;
+    gfx.ctx.drawImage(image, (op.x || 0) * scale, (op.y || 0) * scaleY, width, height);
+  };
+  image.src = source.startsWith("data:") ? source : `data:image/png;base64,${source}`;
+}
+
+function gfxShowImage(event) {
+  const gfx = gfxEnsure();
+  const source = String(event.data || "");
+  const wrap = el("div", { class: "gfx-image" },
+    event.title ? el("div", { class: "gfx-image-title", text: event.title }) : null,
+    el("img", {
+      src: source.startsWith("data:") ? source : `data:image/png;base64,${source}`,
+      alt: event.title || "image",
+    }),
+  );
+  $("graphics-images").appendChild(wrap);
+  gfx.images += 1;
+  $("graphics-empty").classList.add("hidden");
+  gfxSetStatus(event.title ? `Image : ${event.title}` : "Image affichée");
+  if (event.fullscreen !== false) gfxEnterFullscreen(true);
+  else openPanel("graphics");
+  markOutput();
+}
+
+function gfxRender() {
+  const gfx = gfxEnsure();
+  gfx.ctx.setTransform(1, 0, 0, 1, 0, 0);
+  gfx.ctx.fillStyle = gfx.background || "#101018";
+  gfx.ctx.fillRect(0, 0, gfx.canvas.width, gfx.canvas.height);
+  const empty = !gfx.drawn && gfx.images === 0;
+  $("graphics-empty").classList.toggle("hidden", !empty);
+}
+
+function gfxSavePng() {
+  const gfx = gfxEnsure();
+  const link = document.createElement("a");
+  link.download = `pyide-canvas-${Date.now()}.png`;
+  link.href = gfx.canvas.toDataURL("image/png");
+  link.click();
 }
 
 /* ---------- formatage ---------- */
@@ -1907,7 +2571,9 @@ function buildCommands() {
     { title: "Aide sur le symbole (documentation)", run: () => runEditorAction("editor.action.showHover") },
     { title: "Aller à la définition", run: () => runEditorAction("editor.action.revealDefinition") },
     { title: "Formater le code (autopep8)", run: () => formatActive() },
-    { title: "Basculer le terminal", run: () => (state.panel === "terminal" && !$("panel").classList.contains("hidden") ? closePanel() : openPanel("terminal")) },
+    { title: "Voir la sortie du programme", run: () => openPanel("terminal") },
+    { title: "Basculer éditeur / sortie", run: () => togglePanel() },
+    { title: "Graphique en plein écran", run: () => gfxEnterFullscreen(false) },
     { title: "Voir les problèmes", run: () => openPanel("problems") },
     { title: "Afficher / masquer les fichiers", hint: "Ctrl+Maj+E", run: () => toggleSidebar() },
     { title: "Exemples de code", run: () => showSnippets() },
@@ -2196,75 +2862,167 @@ async function createFileWithContent(filename, content) {
 /* ---------- paquets ---------- */
 
 async function showPackages() {
-  const search = el("input", { type: "search", placeholder: "Filtrer les paquets…" });
-  const install = el("input", { type: "text", placeholder: "ex: requests ou numpy==2.1.0" });
-  const installButton = el("button", { class: "text-btn primary", text: "Installer", type: "button" });
+  const tabs = el("div", { class: "pkg-tabs" });
   const status = el("div", { class: "empty-state", text: "Chargement…" });
-  const list = el("ul", { class: "list" });
+  const list = el("ul", { class: "list pkg-list" });
   const output = el("pre", { class: "code-preview hidden" });
-  const body = el("div", {},
-    el("div", { class: "field" }, el("label", { text: "Installer un paquet (pip)" }),
-      el("div", { class: "btn-row" }, install, installButton)),
-    status,
-    output,
-    el("div", { style: "height:8px" }),
-    search,
-    el("div", { style: "height:6px" }),
-    list,
+  const searchRow = el("div", { class: "btn-row" });
+  const searchInput = el("input", { type: "search", placeholder: "Rechercher sur PyPI (ex: requests)" });
+  const searchButton = el("button", { class: "text-btn primary", type: "button", text: "Rechercher" });
+  searchRow.append(searchInput, searchButton);
+
+  const body = el("div", { class: "pkg-body" },
+    status, searchRow, output, list,
   );
 
   let packages = [];
+  let catalog = [];
+  let backend = "pip";
+  let mode = "installed";
+  let results = [];
 
-  function render() {
-    const needle = search.value.trim().toLowerCase();
-    const filtered = packages.filter((pkg) => !needle || pkg.name.toLowerCase().includes(needle));
+  function badge(text, kind = "") {
+    return el("span", { class: `pkg-badge ${kind}`, text });
+  }
+
+  function setTab(next) {
+    mode = next;
+    document.querySelectorAll(".pkg-tabs button").forEach((button) => {
+      button.classList.toggle("active", button.dataset.tab === next);
+    });
+    render();
+  }
+
+  async function install(spec, upgrade = false) {
+    showLoading(`Installation de ${spec}…`);
+    status.classList.remove("hidden");
+    status.textContent = `Installation de ${spec}… (cela peut prendre plusieurs minutes)`;
+    output.classList.add("hidden");
+    try {
+      const result = await api("/api/packages/install", {
+        method: "POST",
+        body: JSON.stringify({ name: spec, upgrade }),
+      });
+      output.textContent = result.output || "";
+      output.classList.remove("hidden");
+      status.textContent = result.ok
+        ? `Installation terminée ✓`
+        : "Échec de l'installation (détails ci-dessus)";
+      if (result.ok) {
+        state.health = null;
+        await refresh();
+      }
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      hideLoading();
+    }
+  }
+
+  async function remove(pkg) {
+    const ok = await modalConfirm({
+      title: "Désinstaller",
+      message: `Désinstaller ${pkg.name} ${pkg.version || ""} ?`,
+      confirmLabel: "Désinstaller",
+      danger: true,
+    });
+    if (!ok) return;
+    showLoading(`Désinstallation de ${pkg.name}…`);
+    try {
+      const result = await api("/api/packages/uninstall", {
+        method: "POST",
+        body: JSON.stringify({ name: pkg.name }),
+      });
+      output.textContent = result.output || "";
+      output.classList.remove("hidden");
+      await refresh();
+    } catch (error) {
+      status.classList.remove("hidden");
+      status.textContent = error.message;
+    } finally {
+      hideLoading();
+    }
+  }
+
+  function renderInstalled() {
     list.textContent = "";
-    if (!filtered.length) {
-      list.appendChild(el("li", { class: "empty-state", text: "Aucun paquet" }));
+    if (!packages.length) {
+      list.appendChild(el("li", { class: "empty-state", text: "Aucun paquet installé" }));
       return;
     }
-    filtered.forEach((pkg) => {
-      const remove = el("button", { class: "text-btn danger", text: "Retirer", type: "button" });
-      let confirming = false;
-      let confirmTimer = null;
-      remove.addEventListener("click", async () => {
-        if (!confirming) {
-          confirming = true;
-          remove.textContent = "Confirmer ?";
-          clearTimeout(confirmTimer);
-          confirmTimer = setTimeout(() => {
-            confirming = false;
-            remove.textContent = "Retirer";
-          }, 3000);
-          return;
-        }
-        clearTimeout(confirmTimer);
-        remove.disabled = true;
-        remove.textContent = "Retrait…";
-        status.classList.remove("hidden");
-        status.textContent = `Désinstallation de ${pkg.name}…`;
-        try {
-          const result = await api("/api/packages/uninstall", {
-            method: "POST",
-            body: JSON.stringify({ name: pkg.name }),
-          });
-          output.textContent = result.output || "";
-          output.classList.remove("hidden");
-          await refresh();
-        } catch (error) {
-          status.textContent = error.message;
-          remove.disabled = false;
-          remove.textContent = "Retirer";
-        }
+    const needle = (searchInput.value || "").trim().toLowerCase();
+    packages
+      .filter((pkg) => !needle || mode !== "installed" || pkg.name.toLowerCase().includes(needle)
+        || (pkg.source || "").includes("search"))
+      .forEach((pkg) => {
+        const actions = el("div", { class: "pkg-actions" },
+          el("button", { class: "text-btn", type: "button", text: "Mettre à jour",
+            onclick: () => install(`${pkg.name}`, true) }),
+          el("button", { class: "text-btn danger", type: "button", text: "Retirer",
+            onclick: () => remove(pkg) }),
+        );
+        list.appendChild(el("li", {},
+          el("div", { class: "pkg-line" },
+            el("span", { class: "title", text: pkg.name }),
+            pkg.graphics ? badge("Graphique", "gfx") : null,
+            el("span", { class: "pkg-version", text: pkg.version || "" }),
+            actions,
+          ),
+        ));
       });
-      list.appendChild(el("li", {},
+  }
+
+  function renderCatalog() {
+    list.textContent = "";
+    catalog.forEach((item) => {
+      const supported = item.supported !== false;
+      const button = el("button", {
+        class: "text-btn primary", type: "button",
+        text: item.installed ? "Réinstaller" : "Installer",
+      });
+      button.disabled = !supported;
+      button.addEventListener("click", () => install(item.name));
+      list.appendChild(el("li", { class: "pkg-card" },
         el("div", { class: "pkg-line" },
-          el("span", { class: "title", text: pkg.name }),
-          el("span", { class: "pkg-version", text: pkg.version }),
-          remove,
+          el("span", { class: "title", text: item.label || item.name }),
+          item.graphics ? badge("Écran graphique", "gfx") : null,
+          item.pure === false ? badge(backend === "wheels" ? "Native" : "Roue binaire", "native") : null,
+          el("span", { class: "pkg-version", text: item.category || "" }),
+        ),
+        el("div", { class: "pkg-desc", text: item.description || "" }),
+        el("div", { class: "pkg-actions" },
+          supported ? button : el("span", { class: "hint", text: "Nécessite une compilation native : indisponible ici." }),
         ),
       ));
     });
+  }
+
+  function renderSearch() {
+    list.textContent = "";
+    if (!results.length) {
+      list.appendChild(el("li", { class: "empty-state", text: "Aucun résultat" }));
+      return;
+    }
+    results.forEach((item) => {
+      const button = el("button", { class: "text-btn primary", type: "button", text: "Installer" });
+      button.addEventListener("click", () => install(item.name));
+      list.appendChild(el("li", { class: "pkg-card" },
+        el("div", { class: "pkg-line" },
+          el("span", { class: "title", text: item.name }),
+          el("span", { class: "pkg-version", text: item.version || "" }),
+          item.graphics ? badge("Graphique", "gfx") : null,
+          item.pure ? badge("Pur Python", "pure") : null,
+        ),
+        el("div", { class: "pkg-desc", text: item.summary || "" }),
+        el("div", { class: "pkg-actions" }, button),
+      ));
+    });
+  }
+
+  function render() {
+    if (mode === "catalog") renderCatalog();
+    else if (mode === "search") renderSearch();
+    else renderInstalled();
   }
 
   async function refresh() {
@@ -2273,43 +3031,56 @@ async function showPackages() {
     try {
       const data = await api("/api/packages");
       packages = data.packages || [];
-      status.classList.add("hidden");
+      backend = data.backend || "pip";
       if (data.error) {
-        status.classList.remove("hidden");
         status.textContent = data.error;
+      } else {
+        status.classList.add("hidden");
       }
+      const catalogData = await api("/api/packages/catalog");
+      catalog = catalogData.catalog || [];
       render();
     } catch (error) {
       status.textContent = error.message;
     }
   }
 
-  installButton.addEventListener("click", async () => {
-    const spec = install.value.trim();
-    if (!spec) return;
-    installButton.disabled = true;
+  async function doSearch() {
+    const query = searchInput.value.trim();
+    if (!query) return;
+    mode = "search";
+    document.querySelectorAll(".pkg-tabs button").forEach((button) => {
+      button.classList.toggle("active", button.dataset.tab === "search");
+    });
     status.classList.remove("hidden");
-    status.textContent = `Installation de ${spec}… (cela peut prendre plusieurs minutes)`;
-    output.classList.add("hidden");
+    status.textContent = `Recherche de « ${query} » sur PyPI…`;
     try {
-      const result = await api("/api/packages/install", {
-        method: "POST",
-        body: JSON.stringify({ name: spec }),
-      });
-      output.textContent = result.output || "";
-      output.classList.remove("hidden");
-      status.textContent = result.ok ? "Installation terminée ✓" : "Échec de l'installation";
-      if (result.ok) install.value = "";
-      await refresh();
+      const data = await api(`/api/packages/search?q=${encodeURIComponent(query)}`);
+      results = data.results || [];
+      status.classList.add("hidden");
+      renderSearch();
     } catch (error) {
       status.textContent = error.message;
-    } finally {
-      installButton.disabled = false;
     }
+  }
+
+  ["installed:Installés", "catalog:Catalogue", "search:Rechercher"].forEach(([key, label]) => {
+    const button = el("button", { type: "button", text: label, "data-tab": key });
+    if (key === "installed") button.classList.add("active");
+    button.addEventListener("click", () => setTab(key));
+    tabs.appendChild(button);
+  });
+  searchButton.addEventListener("click", doSearch);
+  searchInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); doSearch(); }
   });
 
-  search.addEventListener("input", render);
-  openModal({ title: "Paquets Python", body, wide: true });
+  openModal({
+    title: "Modules et paquets",
+    body: el("div", {}, tabs, body),
+    wide: true,
+    footer: [{ label: "Fermer", primary: true, onClick: () => closeModal() }],
+  });
   refresh();
 }
 
@@ -2517,7 +3288,8 @@ function showSettings() {
       el("div", { class: "hint", text: "Doit correspondre à PYIDE_TOKEN. Laisse vide en local." }),
     ),
     el("div", { class: "hint", style: "margin-top:10px" },
-      `Projets : ${state.health?.root || "—"} · Version ${state.health?.version || "2.0.0"}`),
+      `Projets : ${state.health?.root || "—"} · Version ${state.health?.version || "3.0.0"}`
+      + ` · ${PyTransport.native ? "application Android" : "serveur local"}`),
   );
 
   openModal({
@@ -2540,6 +3312,8 @@ function showSettings() {
           keybar: keybar.checked,
         };
         state.token = token.value.trim();
+        PyTransport.setToken(state.token);
+
         if (state.token) localStorage.setItem(TOKEN_KEY, state.token);
         else localStorage.removeItem(TOKEN_KEY);
         saveSettings();
@@ -2554,7 +3328,7 @@ function showSettings() {
 }
 
 function showAbout() {
-  const version = state.health?.version || "2.0.0";
+  const version = state.health?.version || "3.0.0";
   const python = state.health?.python || "—";
   const body = el("div", {},
     el("p", {}, el("strong", { text: `Mobile Py IDE ${version}` })),
@@ -2566,7 +3340,12 @@ function showAbout() {
       el("li", { text: "Diagnostics pyflakes en direct + liste des problèmes" }),
       el("li", { text: "Exécution avec terminal interactif, stdin, stop et timeout" }),
       el("li", { text: "Gestion de fichiers : créer, renommer, supprimer, importer, chercher" }),
-      el("li", { text: "Exemples de code, gestionnaire de paquets pip, assistant IA optionnel" }),
+      el("li", { text: "Éditeur et sortie séparés, redimensionnables (glisser la poignée)" }),
+      el("li", { text: "Entrée interactive comme PyramIDE : input() s'écrit dans la sortie" }),
+      el("li", { text: "Accès aux dossiers du téléphone, import de fichiers" }),
+      el("li", { text: "Modules et paquets : catalogue, recherche PyPI, paquets graphiques" }),
+      el("li", { text: "Écran graphique : pyide_gui, matplotlib, images Pillow" }),
+      el("li", { text: "Exemples de code, assistant IA optionnel" }),
     ),
     el("h3", { style: "margin:14px 0 6px;font-size:14px", text: "Raccourcis" }),
     el("ul", { style: "padding-left:18px;line-height:1.7;font-size:12.5px" },
@@ -2593,7 +3372,10 @@ function showMoreMenu() {
     { icon: "{ }", label: "Formater le code", run: () => formatActive() },
     { icon: "📚", label: "Exemples de code", run: () => showSnippets() },
     { icon: "🔎", label: "Rechercher dans les fichiers", run: () => showSearch() },
-    { icon: "📦", label: "Paquets Python", run: () => showPackages() },
+    { icon: "📦", label: "Modules et paquets", run: () => showPackages() },
+    { icon: "🗂", label: "Ouvrir un dossier…", run: () => addPlaceDialog() },
+    { icon: "⬆", label: "Importer un fichier du téléphone", run: () => importFromDevice() },
+    { icon: "🖼", label: "Écran graphique", run: () => { openPanel("graphics"); gfxRender(); } },
     { icon: "🤖", label: "Assistant IA", run: () => showAI() },
     { icon: "⌘", label: "Palette de commandes", run: () => showPalette() },
     { icon: "⚙", label: "Paramètres", run: () => showSettings() },
@@ -2750,7 +3532,7 @@ function bindUI() {
   $("btn-new-file").addEventListener("click", () => newFileDialog());
   $("btn-new-folder").addEventListener("click", () => newFolderDialog());
   $("btn-refresh").addEventListener("click", () => loadTree(state.currentDir));
-  $("btn-upload").addEventListener("click", () => $("file-input").click());
+  $("btn-import").addEventListener("click", importFromDevice);
   $("file-input").addEventListener("change", (event) => {
     const files = [...(event.target.files || [])];
     event.target.value = "";
@@ -2760,16 +3542,34 @@ function bindUI() {
 
   $("btn-save").addEventListener("click", saveActive);
   $("btn-run").addEventListener("click", runActive);
+  document.querySelectorAll("#page-switch button").forEach((button) => {
+    button.addEventListener("click", () => showPage(button.dataset.page));
+  });
+  $("btn-gfx-full").addEventListener("click", () => gfxEnterFullscreen(true));
+  $("btn-gfx-exit").addEventListener("click", () => gfxExitFullscreen(true));
   $("btn-more").addEventListener("click", showMoreMenu);
   $("btn-console").addEventListener("click", startConsole);
   $("btn-terminal-clear").addEventListener("click", termClear);
   $("btn-panel-close").addEventListener("click", closePanel);
-  $("btn-terminal-close")?.addEventListener("click", closePanel);
+  $("btn-panel-stop").addEventListener("click", stopRun);
+  $("btn-graphics-clear").addEventListener("click", gfxReset);
+  $("btn-graphics-save").addEventListener("click", gfxSavePng);
+  $("place-select").addEventListener("change", (event) => loadTree(event.target.value));
+  $("btn-add-place").addEventListener("click", addPlaceDialog);
+  $("btn-up").addEventListener("click", () => {
+    const parent = state.currentTree && state.currentTree.parent;
+    if (parent) loadTree(parent);
+    else toast("Déjà à la racine de cet emplacement");
+  });
+  bindGfxInput();
+  bindGfxPad();
 
   document.querySelectorAll(".panel-tab").forEach((button) => {
     button.addEventListener("click", () => openPanel(button.dataset.panel));
   });
   $("stdin-form").addEventListener("submit", sendStdin);
+  $("btn-stdin-eof").addEventListener("click", sendEof);
+  $("stdin-input").addEventListener("keydown", stdinHistory);
   $("status-pos").addEventListener("click", goToLine);
   $("status-problems").addEventListener("click", () => openPanel("problems"));
   $("status-settings").addEventListener("click", showSettings);
@@ -2790,12 +3590,39 @@ function bindUI() {
 
 /* ---------- démarrage ---------- */
 
+PyTransport.setToken(state.token);
+
+
+/* Android : retour matériel / reprise de l'application. */
+window.PyIdeBack = function () {
+  if (document.body.classList.contains("gfx-fullscreen")) { gfxExitFullscreen(true); return true; }
+  if (!$("modal-root").classList.contains("hidden")) { closeModal(); return true; }
+  if (!$("sidebar").classList.contains("hidden")) { closeSidebar(); return true; }
+  if (state.page === "output") { showPage("editor"); return true; }
+  return false;
+};
+window.PyIdeOnResume = function () {
+  loadPlaces().then(() => loadTree(state.currentDir || null, { silent: true }));
+};
+
+/* Un appui long ne doit jamais ouvrir un menu système (Google, partage…). */
+document.addEventListener("contextmenu", (event) => {
+  const target = event.target;
+  const editable = target && (
+    target.closest("#editor") || target.closest("input") ||
+    target.closest("textarea") || target.closest("#terminal-body")
+  );
+  if (!editable) event.preventDefault();
+}, true);
+
 bindUI();
+
+const MONACO_BASE = new URL("vendor/monaco/vs", document.baseURI).href;
 
 if (typeof require === "undefined") {
   bootError("Monaco n'a pas pu être chargé. Vérifie le dossier web/vendor/monaco/vs.");
 } else {
-  require.config({ paths: { vs: "/static/vendor/monaco/vs" } });
+  require.config({ paths: { vs: MONACO_BASE } });
   require(["vs/editor/editor.main"], initMonaco, () => {
     bootError("Monaco n'a pas pu démarrer. Le dossier web/vendor/monaco/vs est-il complet ?");
   });

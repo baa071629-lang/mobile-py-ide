@@ -150,7 +150,8 @@ class ApiTestCase(unittest.TestCase):
 
         status, tree = self.request("/api/tree")
         self.assertEqual(status, 200)
-        self.assertEqual(tree["dir"], "")
+        self.assertTrue(tree["dir"].startswith("/"), tree["dir"])
+        self.assertTrue(tree["places"] if "places" in tree else True)
 
     def test_static_files_and_manifest(self):
         status, html = self.request("/", token=None, raw=True)
@@ -173,7 +174,8 @@ class ApiTestCase(unittest.TestCase):
         self.assertFalse(missing["exists"])
 
         saved = self.save("dossier/hello.py", 'print("bonjour")\n')
-        self.assertEqual(saved["path"], "dossier/hello.py")
+        self.assertTrue(saved["path"].endswith("/dossier/hello.py"), saved["path"])
+        self.assertEqual(saved["rel"], "dossier/hello.py")
 
         status, exists = self.request("/api/exists?path=dossier/hello.py")
         self.assertTrue(exists["exists"])
@@ -188,7 +190,7 @@ class ApiTestCase(unittest.TestCase):
 
         status, found = self.request("/api/search?q=bonjour")
         self.assertEqual(status, 200)
-        self.assertTrue(any(item["path"] == "dossier/hello.py" for item in found["results"]))
+        self.assertTrue(any(item["path"].endswith("/dossier/hello.py") for item in found["results"]))
         self.assertTrue(found["results"][0]["line"] >= 1)
 
         status, renamed = self.request("/api/rename", "POST", {

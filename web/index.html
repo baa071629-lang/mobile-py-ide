@@ -8,15 +8,15 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Mobile Py IDE</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="icon" href="/static/icons/icon-192.png" sizes="192x192" type="image/png">
-  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
-  <link rel="manifest" href="/static/manifest.webmanifest">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/icon-192.png" sizes="192x192" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body data-theme="dark">
   <div id="boot">
-    <img class="boot-icon" src="/favicon.svg" width="72" height="72" alt="" aria-hidden="true">
+    <img class="boot-icon" src="favicon.svg" width="72" height="72" alt="" aria-hidden="true">
     <div class="boot-title">Mobile Py IDE</div>
     <div id="boot-msg">Chargement de l'éditeur…</div>
     <div class="boot-bar"><span></span></div>
@@ -25,6 +25,10 @@
   <header id="topbar">
     <button id="btn-sidebar" class="icon-btn" title="Fichiers" aria-label="Ouvrir les fichiers">☰</button>
     <div id="tabbar" role="tablist" aria-label="Fichiers ouverts"></div>
+    <div id="page-switch" role="tablist" aria-label="Pages">
+      <button type="button" data-page="editor" class="active">Éditeur</button>
+      <button type="button" data-page="output">Sortie<i id="output-dot" class="dot hidden"></i></button>
+    </div>
     <button id="btn-run" class="run-btn" title="Exécuter (Ctrl+Entrée)" aria-label="Exécuter">▶</button>
     <button id="btn-save" class="icon-btn" title="Enregistrer (Ctrl+S)" aria-label="Enregistrer">
       <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
@@ -40,14 +44,19 @@
   <div id="layout">
     <aside id="sidebar" class="hidden" aria-hidden="true">
       <div class="sidebar-head">
-        <strong>Projets</strong>
+        <strong>Fichiers</strong>
         <div class="sidebar-actions">
           <button id="btn-new-file" class="icon-btn small" title="Nouveau fichier">＋</button>
           <button id="btn-new-folder" class="icon-btn small" title="Nouveau dossier">🗀</button>
-          <button id="btn-upload" class="icon-btn small" title="Importer des fichiers">⬆</button>
+          <button id="btn-import" class="icon-btn small" title="Importer un fichier du téléphone">⬆</button>
           <button id="btn-refresh" class="icon-btn small" title="Rafraîchir">⟳</button>
           <button id="btn-sidebar-close" class="icon-btn small" title="Fermer">✕</button>
         </div>
+      </div>
+      <div class="place-row">
+        <select id="place-select" aria-label="Emplacement"></select>
+        <button id="btn-add-place" class="icon-btn small" title="Ouvrir un autre dossier">＋</button>
+        <button id="btn-up" class="icon-btn small" title="Dossier parent">⬆</button>
       </div>
       <div id="breadcrumb"></div>
       <ul id="file-list"></ul>
@@ -59,19 +68,27 @@
     <div id="backdrop" class="hidden"></div>
 
     <main id="main">
-      <div id="editor-wrap">
-        <div id="editor"></div>
-      </div>
+      <!-- Page 1 : éditeur seul -->
+      <section id="page-editor" class="page">
+        <div id="editor-wrap">
+          <div id="editor"></div>
+        </div>
+      </section>
 
-      <section id="panel" class="hidden" aria-label="Panneau inférieur">
-        <div id="panel-head">
-          <button class="panel-tab active" data-panel="terminal">Terminal</button>
+      <!-- Page 2 : sortie du programme, seule à l'écran -->
+      <section id="page-output" class="page hidden">
+        <div class="page-head">
+          <button class="panel-tab active" data-panel="terminal">Sortie</button>
+          <button class="panel-tab" data-panel="graphics">Graphique</button>
           <button class="panel-tab" data-panel="problems">Problèmes <span id="problems-badge">0</span></button>
           <div class="spacer"></div>
+          <button id="btn-gfx-full" class="text-btn" title="Afficher le graphique en plein écran">⛶ Plein écran</button>
+          <button id="btn-panel-stop" class="text-btn danger hidden" title="Arrêter le programme">■ Stop</button>
           <button id="btn-console" class="text-btn" title="Ouvrir une console Python interactive">Console</button>
-          <button id="btn-terminal-clear" class="text-btn" title="Effacer le terminal">Effacer</button>
-          <button id="btn-panel-close" class="icon-btn small" title="Fermer le panneau">✕</button>
+          <button id="btn-terminal-clear" class="text-btn" title="Effacer la sortie">Effacer</button>
+          <button id="btn-panel-close" class="icon-btn small" title="Revenir à l'éditeur">✕</button>
         </div>
+
         <div id="terminal-view">
           <div id="terminal-meta">
             <span id="terminal-status">Prêt</span>
@@ -79,12 +96,49 @@
           </div>
           <pre id="terminal-body" aria-live="polite"></pre>
           <form id="stdin-form" class="hidden" autocomplete="off">
-            <span class="prompt">›</span>
-            <input id="stdin-input" placeholder="Entrée du programme…" autocomplete="off"
-                   autocapitalize="off" spellcheck="false">
+            <span id="stdin-prompt" class="prompt">›</span>
+            <input id="stdin-input" placeholder="Saisie du programme (input)…" autocomplete="off"
+                   autocapitalize="off" autocorrect="off" spellcheck="false">
+            <button type="button" id="btn-stdin-eof" class="text-btn" title="Fin de l'entrée (Ctrl+D)">EOF</button>
             <button type="submit" class="text-btn primary">Envoyer</button>
           </form>
         </div>
+
+        <div id="graphics-view" class="hidden">
+          <div id="graphics-toolbar">
+            <span id="graphics-status">Aucun affichage</span>
+            <div class="spacer"></div>
+            <button id="btn-graphics-clear" class="text-btn" type="button">Effacer</button>
+            <button id="btn-graphics-save" class="text-btn" type="button">PNG</button>
+          </div>
+          <div id="graphics-stage">
+            <canvas id="graphics-canvas" width="640" height="400"></canvas>
+            <div id="graphics-images"></div>
+            <div id="graphics-empty">
+              Les programmes <code>pygame</code>, <code>tkinter</code>, <code>pyide_gui</code>,
+              <code>plt.show()</code> et <code>Image.show()</code> s'affichent ici — en plein écran.
+            </div>
+            <button id="btn-gfx-exit" class="gfx-exit hidden" type="button" title="Quitter le plein écran">⤢ Quitter</button>
+            <div id="gfx-pad" class="hidden" aria-label="Commandes tactiles">
+              <button id="gfx-pad-toggle" class="gfx-pad-toggle" type="button"
+                      title="Afficher ou masquer les commandes tactiles">🎮</button>
+              <div id="gfx-pad-body" class="gfx-pad-body">
+                <div class="gfx-pad-dpad">
+                  <button type="button" class="pad up" data-gfx-key="UP" title="Haut">▲</button>
+                  <button type="button" class="pad left" data-gfx-key="LEFT" title="Gauche">◀</button>
+                  <button type="button" class="pad down" data-gfx-key="DOWN" title="Bas">▼</button>
+                  <button type="button" class="pad right" data-gfx-key="RIGHT" title="Droite">▶</button>
+                </div>
+                <div class="gfx-pad-actions">
+                  <button type="button" class="pad a" data-gfx-key="RETURN" title="Entrée">A</button>
+                  <button type="button" class="pad b" data-gfx-key="SPACE" title="Espace">B</button>
+                  <button type="button" class="pad c" data-gfx-key="ESCAPE" title="Échap">✕</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div id="problems-view" class="hidden">
           <ul id="problems-list"></ul>
           <div id="problems-empty">Aucun problème détecté. 🎉</div>
@@ -142,7 +196,8 @@
   <input type="file" id="file-input" multiple hidden>
 
   <noscript><p style="padding:2rem">Active JavaScript pour utiliser Mobile Py IDE.</p></noscript>
-  <script src="/static/vendor/monaco/vs/loader.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="vendor/monaco/vs/loader.js"></script>
+  <script src="transport.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
