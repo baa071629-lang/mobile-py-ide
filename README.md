@@ -87,6 +87,43 @@ s.present()
 `plt.show()` (Matplotlib) et `Image.show()` (Pillow) affichent aussi leur rendu
 dans cet onglet.
 
+#### Pygame et Tkinter
+
+Les programmes `pygame` et `tkinter` écrits pour un ordinateur tournent
+tels quels : l'IDE fournit un **serveur graphique interne** (`server/gfxserver.py`)
+et des modules de compatibilité (`shims/`) qui traduisent les appels en
+primitives de dessin envoyées au navigateur.
+
+```python
+import pygame
+
+pygame.init()
+ecran = pygame.display.set_mode((480, 320), pygame.FULLSCREEN)
+horloge = pygame.time.Clock()
+vaisseau = pygame.Surface((40, 40), pygame.SRCALPHA)
+pygame.draw.polygon(vaisseau, (120, 220, 255), [(20, 0), (40, 40), (0, 40)])
+
+angle = 0
+while True:
+    for evenement in pygame.event.get():
+        if evenement.type == pygame.QUIT:
+            raise SystemExit
+    ecran.blit(pygame.transform.rotate(vaisseau, angle), (200, 120))
+    pygame.display.flip()
+    horloge.tick(30)
+    angle += 5
+```
+
+Pris en charge : `Surface`, `draw`, `font`, `image` (`save`/`tostring` compris),
+`transform` (`flip`, `rotate`, `rotozoom`, `scale`), `sprite`, `Rect`, `Color`,
+`event`, `key`, `mouse`, `time.Clock`, ainsi que les widgets Tk usuels
+(`Frame`, `Label`, `Button`, `Entry`, `Text`, `Checkbutton`, `Canvas`, `Menu`,
+`messagebox`, `after`).
+
+Le rendu occupe **tout l'écran** (barres système masquées sur Android) et une
+**manette tactile** (pavé directionnel, A = Entrée, B = Espace, ✕ = Échap)
+envoie les touches au programme ; le bouton 🎮 la masque.
+
 ## Installation (Termux)
 
 ```bash
@@ -220,10 +257,11 @@ cd android && gradle assembleDebug
 
 ## Limites connues
 
-- **Pas de Tkinter/Kivy/Pygame natif** dans l'APK : ces boîtes à outils
-  nécessitent un serveur graphique absent d'Android. L'écran graphique
-  `pyide_gui` couvre les besoins de dessin simples, et un module manquant
-  affiche un message explicite.
+- **Pygame et Tkinter passent par les modules de compatibilité** : le
+  sous-ensemble documenté ci-dessus fonctionne, mais les fonctions rares
+  (shaders, `pygame._sdl2`, mixage audio natif, `ttk` avancé) sont absentes ou
+  silencieuses. `kivy` et `turtle` restent indisponibles et affichent un
+  message explicite.
 - Dans l'app Android, l'installation de paquets est limitée aux **roues pures**
   (pas de compilation). Les bibliothèques natives doivent être intégrées au
   build.
@@ -233,7 +271,15 @@ cd android && gradle assembleDebug
 - Sortie limitée à 512 Ko par exécution et fichiers limités à 5 Mo.
 - Le jeton est un secret partagé, pas un système multi-utilisateurs.
 
-## Licence
+## Licence et indépendance
 
 Projet personnel de `baa071629-lang`. Monaco est distribué sous licence MIT
 (voir `web/vendor/monaco`).
+
+Les modules `shims/` sont une **réimplémentation originale** écrite à partir
+des API publiques de pygame et de tkinter (documentation officielle) et des
+spécifications du protocole graphique de ce dépôt. Aucun code de PyramIDE,
+Pydroid 3 ou de tout autre IDE propriétaire n'a été copié, décompilé ni
+réutilisé : les comportements visés sont ceux, publics, des bibliothèques
+d'origine. `pygame` et `tkinter` eux-mêmes sont sous LGPL ; ici, seuls leurs
+noms et signatures d'API sont utilisés, sans lier ni redistribuer leur code.
